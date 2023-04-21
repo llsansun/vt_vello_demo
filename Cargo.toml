@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "integrations/vello_svg",
+
+    "examples/headless",
+    "examples/with_winit",
+    "examples/with_bevy",
+    "examples/run_wasm",
+    "examples/scenes",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.0.1"
+license = "MIT/Apache-2.0"
+# homepage = "https://vello.dev" - Domain owned by us, but unused at present
+# rust-version = 
+repository = "https://github.com/linebender/vello"
+
+[package]
+name = "vello"
+description = "An experimental GPU compute-centric 2D renderer"
+categories = ["rendering", "graphics"]
+keywords = ["2d", "vector-graphics"]
+
+# This crate is intended for publishing, but not ready yet
+publish = false
+
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+hot_reload = []
+buffer_labels = []
+
+[dependencies]
+wgpu = { workspace = true }
+raw-window-handle = "0.5"
+futures-intrusive = "0.5.0"
+parking_lot = "0.12"
+bytemuck = { version = "1.12.1", features = ["derive"] }
+smallvec = "1.8.0"
+fello = { git = "https://github.com/dfrg/fount", rev = "a8c0686ca9da236420c04d1f476c41cf7fe6d2ba" }
+peniko = { git = "https://github.com/linebender/peniko", rev = "cafdac9a211a0fb2fec5656bd663d1ac770bcc81" }
+guillotiere = "0.6.2"
+
+[workspace.dependencies]
+wgpu = "0.15"
+
+# Used for examples
+clap = "4.1.0"
+anyhow = "1.0"
+pollster = "0.3.0"
