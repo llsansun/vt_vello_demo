@@ -20,7 +20,7 @@ use std::time::Instant;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use scenes::{ImageCache, SceneParams, SceneSet, SimpleText};
-use vello::peniko::{Color, Stroke, Dashes};
+use vello::peniko::{Color, Stroke, Dashes, Fill};
 use vello::util::RenderSurface;
 use vello::{
     kurbo::{Affine, Vec2},
@@ -378,6 +378,17 @@ fn run(
                 None,
                 &marker2,
             );
+
+            let marker3 = [
+                MoveTo((0., graph_max_height).into()),
+                LineTo((graph_max_width, graph_max_height).into()),
+                QuadTo((graph_max_width + 50., graph_max_height * 2. - 50.).into(),(graph_max_width, graph_max_height * 2.).into()),
+                LineTo((0., graph_max_height * 2.).into()),
+                CurveTo((-50., graph_max_height - 20.).into(),(-50., graph_max_height - 20.).into(),(0., graph_max_height).into()),
+                ClosePath,
+            ];
+            let fill = Fill::EvenOdd;
+            builder.fill(fill, transform*Affine::translate((30., 100.)), Color::RED, None, &marker3);
             
             if stats_shown {
                 snapshot.draw_layer(
