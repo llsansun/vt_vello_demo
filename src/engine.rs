@@ -680,7 +680,7 @@ impl BindMap {
                             mip_level_count: 1,
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,
-                            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::STORAGE_BINDING,
                             format,
                             view_formats: &[],
                         });

@@ -23,6 +23,22 @@ struct BinHeader {
     chunk_offset: u32,
 }
 
+struct Partition{
+    partition_ix:u32,
+
+    clip_zero_depth: u32,
+    clip_depth: u32,
+
+    rd_ix: u32,
+    wr_ix: u32,
+    part_start_ix: u32,
+    ready_ix: u32,
+
+    // blend state
+    render_blend_depth: u32,
+    max_blend_depth: u32,
+}
+
 @group(0) @binding(3)
 var<storage> bin_headers: array<BinHeader>;
 
@@ -147,53 +163,21 @@ fn write_end_clip(end_clip: CmdEndClip) {
     cmd_offset += 3u;
 }
 
-@compute @workgroup_size(256)
-fn main(
-    @builtin(local_invocation_id) local_id: vec3<u32>,
-    @builtin(workgroup_id) wg_id: vec3<u32>,
-) {
-    // Exit early if prior stages failed, as we can't run this stage.
-    // We need to check only prior stages, as if this stage has failed in another workgroup, 
-    // we still want to know this workgroup's memory requirement.   
-#ifdef have_uniform
-    if local_id.x == 0u {
-        // Reuse sh_part_count to hold failed flag, shmem is tight
-        sh_part_count[0] = atomicLoad(&bump.failed);
-    }
-    let failed = workgroupUniformLoad(&sh_part_count[0]);
-#else
-    let failed = atomicLoad(&bump.failed);
-#endif
-    if (failed & (STAGE_BINNING | STAGE_TILE_ALLOC | STAGE_PATH_COARSE)) != 0u {
-        return;
-    }
+fn coarse_handle(p: Partition,
+    draw_objs: u32,
+    local_id: vec3<u32>,
+    wg_id: vec3<u32>) -> Partition{
+    var par = p;
+
     let width_in_bins = (config.width_in_tiles + N_TILE_X - 1u) / N_TILE_X;
     let bin_ix = width_in_bins * wg_id.y + wg_id.x;
-    let n_partitions = (config.n_drawobj + N_TILE - 1u) / N_TILE;
+    var n_partitions = (draw_objs + N_TILE - 1u) / N_TILE;
 
-    // Coordinates of the top left of this bin, in tiles.
     let bin_tile_x = N_TILE_X * wg_id.x;
     let bin_tile_y = N_TILE_Y * wg_id.y;
-
     let tile_x = local_id.x % N_TILE_X;
     let tile_y = local_id.x / N_TILE_X;
-    let this_tile_ix = (bin_tile_y + tile_y) * config.width_in_tiles + bin_tile_x + tile_x;
-    cmd_offset = this_tile_ix * PTCL_INITIAL_ALLOC;
-    cmd_limit = cmd_offset + (PTCL_INITIAL_ALLOC - PTCL_HEADROOM);
 
-    // clip state
-    var clip_zero_depth = 0u;
-    var clip_depth = 0u;
-
-    var partition_ix = 0u;
-    var rd_ix = 0u;
-    var wr_ix = 0u;
-    var part_start_ix = 0u;
-    var ready_ix = 0u;
-
-    // blend state
-    var render_blend_depth = 0u;
-    var max_blend_depth = 0u;
 
     let blend_offset = cmd_offset;
     cmd_offset += 1u;
@@ -202,13 +186,13 @@ fn main(
         for (var i = 0u; i < N_SLICE; i += 1u) {
             atomicStore(&sh_bitmaps[i][local_id.x], 0u);
         }
-
+        // n_partitions = (65535u + N_TILE - 1u) / N_TILE;
         while true {
-            if ready_ix == wr_ix && partition_ix < n_partitions {
-                part_start_ix = ready_ix;
+            if par.ready_ix == par.wr_ix && par.partition_ix < n_partitions {
+                par.part_start_ix = par.ready_ix;
                 var count = 0u;
-                if partition_ix + local_id.x < n_partitions {
-                    let in_ix = (partition_ix + local_id.x) * N_TILE + bin_ix;
+                if par.partition_ix + local_id.x < n_partitions {
+                    let in_ix = (par.partition_ix + local_id.x) * N_TILE + bin_ix;
                     let bin_header = bin_headers[in_ix];
                     count = bin_header.element_count;
                     sh_part_offsets[local_id.x] = bin_header.chunk_offset;
@@ -222,18 +206,18 @@ fn main(
                     }
                     workgroupBarrier();
                 }
-                sh_part_count[local_id.x] = part_start_ix + count;
+                sh_part_count[local_id.x] = par.part_start_ix + count;
 #ifdef have_uniform
-                ready_ix = workgroupUniformLoad(&sh_part_count[WG_SIZE - 1u]);
+                par.ready_ix = workgroupUniformLoad(&sh_part_count[WG_SIZE - 1u]);
 #else
                 workgroupBarrier();
-                ready_ix = sh_part_count[WG_SIZE - 1u];
+                par.ready_ix = sh_part_count[WG_SIZE - 1u];
 #endif
-                partition_ix += WG_SIZE;
+                par.partition_ix += WG_SIZE;
             }
             // use binary search to find draw object to read
-            var ix = rd_ix + local_id.x;
-            if ix >= wr_ix && ix < ready_ix {
+            var ix = par.rd_ix + local_id.x;
+            if ix >= par.wr_ix && ix < par.ready_ix {
                 var part_ix = 0u;
                 for (var i = 0u; i < firstTrailingBit(WG_SIZE); i += 1u) {
                     let probe = part_ix + ((N_TILE / 2u) >> i);
@@ -241,19 +225,21 @@ fn main(
                         part_ix = probe;
                     }
                 }
-                ix -= select(part_start_ix, sh_part_count[part_ix - 1u], part_ix > 0u);
+                ix -= select(par.part_start_ix, sh_part_count[part_ix - 1u], part_ix > 0u);
                 let offset = config.bin_data_start + sh_part_offsets[part_ix];
                 sh_drawobj_ix[local_id.x] = info_bin_data[offset + ix];
             }
-            wr_ix = min(rd_ix + N_TILE, ready_ix);
-            if wr_ix - rd_ix >= N_TILE || (wr_ix >= ready_ix && partition_ix >= n_partitions) {
+            par.wr_ix = min(par.rd_ix + N_TILE, par.ready_ix);
+            if par.wr_ix - par.rd_ix >= N_TILE || (par.wr_ix >= par.ready_ix && par.partition_ix >= n_partitions) {
                 break;
             }
         }
-        // At this point, sh_drawobj_ix[0.. wr_ix - rd_ix] contains merged binning results.
+        
+
+        // At this point, sh_drawobj_ix[0.. par.wr_ix - par.rd_ix] contains merged binning results.
         var tag = DRAWTAG_NOP;
         var drawobj_ix: u32;
-        if local_id.x + rd_ix < wr_ix {
+        if local_id.x + par.rd_ix < par.wr_ix {
             drawobj_ix = sh_drawobj_ix[local_id.x];
             tag = scene[config.drawtag_base + drawobj_ix];
         }
@@ -354,7 +340,7 @@ fn main(
             let dm = draw_monoids[drawobj_ix];
             let dd = config.drawdata_base + dm.scene_offset;
             let di = dm.info_offset;
-            if clip_zero_depth == 0u {
+            if par.clip_zero_depth == 0u {
                 let tile_ix = sh_tile_base[el_ix] + sh_tile_stride[el_ix] * tile_y + tile_x;
                 let tile = tiles[tile_ix];
                 switch drawtag {
@@ -394,22 +380,22 @@ fn main(
                     // DRAWTAG_BEGIN_CLIP
                     case 0x9u: {
                         if tile.segments == 0u && tile.backdrop == 0 {
-                            clip_zero_depth = clip_depth + 1u;
+                            par.clip_zero_depth = par.clip_depth + 1u;
                         } else {
                             write_begin_clip();
-                            render_blend_depth += 1u;
-                            max_blend_depth = max(max_blend_depth, render_blend_depth);
+                            par.render_blend_depth += 1u;
+                            par.max_blend_depth = max(par.max_blend_depth, par.render_blend_depth);
                         }
-                        clip_depth += 1u;
+                        par.clip_depth += 1u;
                     }
                     // DRAWTAG_END_CLIP
                     case 0x21u: {
-                        clip_depth -= 1u;
+                        par.clip_depth -= 1u;
                         write_path(tile, -1.0);
                         let blend = scene[dd];
                         let alpha = bitcast<f32>(scene[dd + 1u]);
                         write_end_clip(CmdEndClip(blend, alpha));
-                        render_blend_depth -= 1u;
+                        par.render_blend_depth -= 1u;
                     }
                     default: {}
                 }
@@ -418,31 +404,102 @@ fn main(
                 switch drawtag {
                     // DRAWTAG_BEGIN_CLIP
                     case 0x9u: {
-                        clip_depth += 1u;
+                        par.clip_depth += 1u;
                     }
                     // DRAWTAG_END_CLIP
                     case 0x21u: {
-                        if clip_depth == clip_zero_depth {
-                            clip_zero_depth = 0u;
+                        if par.clip_depth == par.clip_zero_depth {
+                            par.clip_zero_depth = 0u;
                         }
-                        clip_depth -= 1u;
+                        par.clip_depth -= 1u;
                     }
                     default: {}
                 }
             }
         }
 
-        rd_ix += N_TILE;
-        if rd_ix >= ready_ix && partition_ix >= n_partitions {
+        par.rd_ix += N_TILE;
+        if par.rd_ix >= par.ready_ix && par.partition_ix >= n_partitions {
             break;
         }
         workgroupBarrier();
+        
     }
     if bin_tile_x + tile_x < config.width_in_tiles && bin_tile_y + tile_y < config.height_in_tiles {
         ptcl[cmd_offset] = CMD_END;
-        if max_blend_depth > BLEND_STACK_SPLIT {
-            let scratch_size = max_blend_depth * TILE_WIDTH * TILE_HEIGHT;
+        if par.max_blend_depth > BLEND_STACK_SPLIT {
+            let scratch_size = par.max_blend_depth * TILE_WIDTH * TILE_HEIGHT;
             ptcl[blend_offset] = atomicAdd(&bump.blend, scratch_size);
         }
     }
+    return par;
+}
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(local_invocation_id) local_id: vec3<u32>,
+    @builtin(workgroup_id) wg_id: vec3<u32>,
+) {
+    
+    // Exit early if prior stages failed, as we can't run this stage.
+    // We need to check only prior stages, as if this stage has failed in another workgroup, 
+    // we still want to know this workgroup's memory requirement.   
+#ifdef have_uniform
+    if local_id.x == 0u {
+        // Reuse sh_part_count to hold failed flag, shmem is tight
+        sh_part_count[0] = atomicLoad(&bump.failed);
+    }
+    let failed = workgroupUniformLoad(&sh_part_count[0]);
+#else
+    let failed = atomicLoad(&bump.failed);
+#endif
+    if (failed & (STAGE_BINNING | STAGE_TILE_ALLOC | STAGE_PATH_COARSE)) != 0u {
+        return;
+    }
+    // Coordinates of the top left of this bin, in tiles.
+    let bin_tile_x = N_TILE_X * wg_id.x;
+    let bin_tile_y = N_TILE_Y * wg_id.y;
+
+    let tile_x = local_id.x % N_TILE_X;
+    let tile_y = local_id.x / N_TILE_X;
+    let this_tile_ix = (bin_tile_y + tile_y) * config.width_in_tiles + bin_tile_x + tile_x;
+    cmd_offset = this_tile_ix * PTCL_INITIAL_ALLOC;
+    
+    cmd_limit = cmd_offset + (PTCL_INITIAL_ALLOC - PTCL_HEADROOM);
+
+    var par = Partition(0u, 0u,0u,0u,0u,0u,0u,0u,0u);
+    // clip state
+    // var clip_zero_depth = 0u;
+    // var clip_depth = 0u;
+
+    // var rd_ix = 0u;
+    // var wr_ix = 0u;
+    // var part_start_ix = 0u;
+    // var ready_ix = 0u;
+
+    // // blend state
+    // var render_blend_depth = 0u;
+    // var max_blend_depth = 0u;
+
+
+    // var partition_ix = 0u;
+    par = coarse_handle(par, 65535u, local_id, wg_id);
+    // cmd_offset += 1u;
+    // par = Partition(0u, 0u,0u,0u,0u,0u,0u,0u,0u);
+    // par = coarse_handle(par, config.n_drawobj, vec3<u32>(local_id.x + 256u, local_id.y,local_id.z), wg_id);
+    
+    // if bin_tile_x + tile_x < config.width_in_tiles && bin_tile_y + tile_y < config.height_in_tiles {
+    //     ptcl[cmd_offset] = CMD_END;
+    // }
+    // cmd_offset += 1u;
+    // ptcl[cmd_offset] = 12u;
+    
+    // ptcl[cmd_offset + 100u] = CMD_END;
+    // ptcl[cmd_offset + 2u] = CMD_END;
+    // ptcl[cmd_offset + 3u] = CMD_END;
+    // if bin_tile_x + tile_x < config.width_in_tiles && bin_tile_y + tile_y < config.height_in_tiles {
+    //     ptcl[cmd_offset + 1u] = CMD_END;
+    //     ptcl[cmd_offset + 2u] = CMD_END;
+    //     ptcl[cmd_offset + 3u] = CMD_END;
+    // }
 }

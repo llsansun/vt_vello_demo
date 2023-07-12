@@ -211,6 +211,7 @@ impl Renderer {
         let recording = render.render_encoding_coarse(encoding, &self.shaders, params, true);
         let target = render.out_image();
         let bump_buf = render.bump_buf();
+        let bump_buf2 = render.bump_buf2();
         self.engine.run_recording(device, queue, &recording, &[])?;
         if let Some(bump_buf) = self.engine.get_download(bump_buf) {
             let buf_slice = bump_buf.slice(..);
@@ -227,6 +228,7 @@ impl Renderer {
         // TODO: apply logic to determine whether we need to rerun coarse, and also
         // allocate the blend stack as needed.
         self.engine.free_download(bump_buf);
+        self.engine.free_download(bump_buf2);
         // Maybe clear to reuse allocation?
         let mut recording = Recording::default();
         render.record_fine(&self.shaders, &mut recording);

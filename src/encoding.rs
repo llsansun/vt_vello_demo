@@ -20,7 +20,7 @@ mod draw;
 mod encoding;
 mod glyph;
 mod glyph_cache;
-mod image_cache;
+pub(crate) mod image_cache;
 mod math;
 mod monoid;
 mod path;
