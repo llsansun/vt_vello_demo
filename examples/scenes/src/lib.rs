@@ -2,7 +2,7 @@ pub mod download;
 mod images;
 mod simple_text;
 mod svg;
-mod test_scenes;
+// mod test_scenes;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
@@ -11,7 +11,7 @@ use download::Download;
 pub use images::ImageCache;
 pub use simple_text::SimpleText;
 pub use svg::{default_scene, scene_from_files};
-pub use test_scenes::test_scenes;
+// pub use test_scenes::test_scenes;
 
 use vello::{kurbo::Vec2, peniko::Color, SceneBuilder,};
 
@@ -34,7 +34,7 @@ pub struct SceneConfig {
 }
 
 pub struct ExampleScene {
-    pub function: Box<dyn FnMut(&mut SceneBuilder, &mut SceneParams)>,
+    pub function: Box<dyn FnMut(&mut Vec<SceneBuilder>, &mut SceneParams)>,
     pub config: SceneConfig,
 }
 
@@ -84,9 +84,7 @@ impl Arguments {
             #[cfg(any(target_arch = "wasm32", target_os = "android"))]
             return Ok(Some(test_scenes()));
             #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-            if self.test_scenes {
-                Ok(test_scenes())
-            } else if let Some(svgs) = &self.svgs {
+            if let Some(svgs) = &self.svgs {
                 scene_from_files(&svgs)
             } else {
                 default_scene(command)

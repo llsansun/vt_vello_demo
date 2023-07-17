@@ -92,6 +92,10 @@ fn main(
         y0 = i32(floor(bbox.y * SY));
         x1 = i32(ceil(bbox.z * SX));
         y1 = i32(ceil(bbox.w * SY));
+        x0 = 0;
+        y0 = 0;
+        x1 = i32((config.width_in_tiles + N_TILE_X - 1u) / N_TILE_X);;
+        y1 = i32((config.height_in_tiles + N_TILE_Y - 1u) / N_TILE_Y);
     }
     let width_in_bins = i32((config.width_in_tiles + N_TILE_X - 1u) / N_TILE_X);
     let height_in_bins = i32((config.height_in_tiles + N_TILE_Y - 1u) / N_TILE_Y);

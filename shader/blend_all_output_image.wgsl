@@ -33,7 +33,7 @@ fn main(
     for (var i = 0u; i < PIXELS_PER_THREAD; i += 1u) {
         let coords = xy_uint + vec2(i, 0u);
         //if coords.x < config.target_width && coords.y < config.target_height {
-            rgba1[i] = textureLoad(texture1, vec2<i32>(coords.xy), 0);
+            rgba1[i] = vec4<f32>(0.,0.,0.,0.);//textureLoad(texture1, vec2<i32>(coords.xy), 0);
             rgba2[i] = textureLoad(texture2, vec2<i32>(coords.xy), 0); 
             var rgba_sep = vec4<f32>(0.,0.,0.,0.);
             if length(rgba1[i].rgb - rgba2[i].rgb) <= 0.01{

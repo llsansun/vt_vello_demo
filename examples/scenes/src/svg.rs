@@ -21,7 +21,7 @@ pub fn default_scene(command: impl FnOnce() -> clap::Command) -> Result<SceneSet
     let mut has_empty_directory = false;
     let result = scene_from_files_inner(
         &[
-            assets_dir.join("Ghostscript_Tiger.svg"),
+            assets_dir.join("test.svg"),
             assets_dir.join("downloads"),
         ],
         || has_empty_directory = true,
@@ -85,22 +85,126 @@ fn example_scene_of(file: PathBuf) -> ExampleScene {
     }
 }
 
+// pub fn svg_function_of<R: AsRef<str>>(
+//     name: String,
+//     contents: impl FnOnce() -> R + Send + 'static,
+// ) -> impl FnMut(&mut Vec<SceneBuilder>, &mut SceneParams) {
+//     fn render_svg_contents(name: &str, contents: &str) -> (Vec<SceneFragment>, Vec2) {
+//         let start = Instant::now();
+//         let svg = usvg::Tree::from_str(&contents, &usvg::Options::default())
+//             .expect("failed to parse svg file");
+//         // let mut new_scene = SceneFragment::new();
+//         // let mut builder = SceneBuilder::for_fragment(&mut new_scene);
+//         // vello_svg::render_tree(&mut builder, &svg);
+//         let scene_count = 1;//svg.root.descendants().count() / 40000;
+//         let mut scenes = Vec::with_capacity(scene_count);
+
+//         for i in 0..scene_count{
+//             scenes.push(SceneFragment::new());
+//         }
+//         for i in 0..scene_count{
+//             let mut builder = SceneBuilder::for_fragment(&mut scenes[i]);
+//             vello_svg::render_tree_scenes(0, &mut builder, &svg);
+//         }
+//         let resolution = Vec2::new(svg.size.width(), svg.size.height());
+//         eprintln!("Rendered svg {name} in {:?}", start.elapsed());
+//         (scenes, resolution)
+//     }
+//     let mut cached_scene = None;
+//     #[cfg(not(target_arch = "wasm32"))]
+//     let (tx, rx) = std::sync::mpsc::channel();
+//     #[cfg(not(target_arch = "wasm32"))]
+//     let mut tx = Some(tx);
+//     #[cfg(not(target_arch = "wasm32"))]
+//     let mut has_started_parse = false;
+//     let mut contents = Some(contents);
+//     move |builder, params| {
+//         if let Some((scene_frag, resolution)) = cached_scene.as_mut() {
+//             builder.append(&scene_frag, None);
+//             params.resolution = Some(*resolution);
+//             return;
+//         }
+//         if cfg!(target_arch = "wasm32") || !params.interactive {
+//             let contents = contents.take().unwrap();
+//             let contents = contents();
+//             let (scene_frag, resolution) = render_svg_contents(&name, contents.as_ref());
+//             // builder.append(&scene_frag, None);
+//             for j in 0..scene_frag.len() {
+//                 builder[j].append(&scene_frag[j], None);
+//             }
+//             params.resolution = Some(resolution);
+//             cached_scene = Some((scene_frag, resolution));
+//             return;
+//         }
+//         #[cfg(not(target_arch = "wasm32"))]
+//         {
+//             let mut timeout = std::time::Duration::from_millis(10);
+//             if !has_started_parse {
+//                 has_started_parse = true;
+//                 // Prefer jank over loading screen for first time
+//                 timeout = std::time::Duration::from_millis(75);
+//                 let tx = tx.take().unwrap();
+//                 let contents = contents.take().unwrap();
+//                 let name = name.clone();
+//                 std::thread::spawn(move || {
+//                     let contents = contents();
+//                     tx.send(render_svg_contents(&name, contents.as_ref()))
+//                         .unwrap();
+//                 });
+//             }
+//             let recv = rx.recv_timeout(timeout);
+//             use std::sync::mpsc::RecvTimeoutError;
+//             match recv {
+//                 Result::Ok((scene_frag, resolution)) => {
+//                     builder.append(&scene_frag, None);
+//                     params.resolution = Some(resolution);
+//                     cached_scene = Some((scene_frag, resolution))
+//                 }
+//                 Err(RecvTimeoutError::Timeout) => params.text.add(
+//                     builder,
+//                     None,
+//                     48.,
+//                     None,
+//                     vello::kurbo::Affine::translate((110.0, 600.0)),
+//                     &format!("Loading {name}"),
+//                 ),
+//                 Err(RecvTimeoutError::Disconnected) => {
+//                     panic!()
+//                 }
+//             }
+//         };
+//     }
+// }
+
 pub fn svg_function_of<R: AsRef<str>>(
     name: String,
     contents: impl FnOnce() -> R + Send + 'static,
-) -> impl FnMut(&mut SceneBuilder, &mut SceneParams) {
-    fn render_svg_contents(name: &str, contents: &str) -> (SceneFragment, Vec2) {
+) -> impl FnMut(&mut Vec<SceneBuilder>, &mut SceneParams) {
+    fn render_svg_contents(name: &str, contents: &str) -> (Vec<SceneFragment>, Vec2) {
         let start = Instant::now();
         let svg = usvg::Tree::from_str(&contents, &usvg::Options::default())
             .expect("failed to parse svg file");
-        let mut new_scene = SceneFragment::new();
-        let mut builder = SceneBuilder::for_fragment(&mut new_scene);
-        vello_svg::render_tree(&mut builder, &svg);
+        let scene_count = (svg.root.descendants().count() / 40000) + 1;
+        let mut scenes = Vec::with_capacity(scene_count);
+
+        for i in 0..scene_count{
+            scenes.push(SceneFragment::new());
+        }
+        for i in 0..scene_count{
+            let mut builder = SceneBuilder::for_fragment(&mut scenes[i]);
+            vello_svg::render_tree_scenes(i * 40000, &mut builder, &svg);
+        }
+        // vello_svg::render_tree(&mut builders, &svg);
+        // for i in 0..builders.len() {
+        //     scenes.push(builders[i].scene().clone());
+        // }
+        // let mut new_scene = SceneFragment::new();
+        // let mut builder = SceneBuilder::for_fragment(&mut new_scene);
         let resolution = Vec2::new(svg.size.width(), svg.size.height());
         eprintln!("Rendered svg {name} in {:?}", start.elapsed());
-        (new_scene, resolution)
+        (scenes, resolution)
     }
-    let mut cached_scene = None;
+    let mut cached_scene: Vec<(_, _)> = Vec::<(_, _)>::new();
     #[cfg(not(target_arch = "wasm32"))]
     let (tx, rx) = std::sync::mpsc::channel();
     #[cfg(not(target_arch = "wasm32"))]
@@ -109,18 +213,30 @@ pub fn svg_function_of<R: AsRef<str>>(
     let mut has_started_parse = false;
     let mut contents = Some(contents);
     move |builder, params| {
-        if let Some((scene_frag, resolution)) = cached_scene.as_mut() {
-            builder.append(&scene_frag, None);
-            params.resolution = Some(*resolution);
+        if cached_scene.len() != 0{
+            for i in 0..cached_scene.len() {
+                let (scene_frags, resolution): &(Vec<SceneFragment>, _) = &cached_scene[i];
+                for j in 0..scene_frags.len() {
+                    builder[j].append(&scene_frags[j], None);
+                }
+                // builder[i].append(&scene_frag, None);
+                // builder.append(&scene_frag[i], None);
+                params.resolution = Some(*resolution);
+            }
+            // builder.append(&scene_frag, None);
             return;
         }
         if cfg!(target_arch = "wasm32") || !params.interactive {
             let contents = contents.take().unwrap();
             let contents = contents();
             let (scene_frag, resolution) = render_svg_contents(&name, contents.as_ref());
-            builder.append(&scene_frag, None);
-            params.resolution = Some(resolution);
-            cached_scene = Some((scene_frag, resolution));
+            for i in 0..scene_frag.len() {
+                builder[i].append(&scene_frag[i], None);
+                // builder.append(&scene_frag[i], None);
+                params.resolution = Some(resolution);
+            }
+            cached_scene.push((scene_frag, resolution));
+            // builder.append(&scene_frag, None);
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -143,12 +259,16 @@ pub fn svg_function_of<R: AsRef<str>>(
             use std::sync::mpsc::RecvTimeoutError;
             match recv {
                 Result::Ok((scene_frag, resolution)) => {
-                    builder.append(&scene_frag, None);
+                    // builder.append(&scene_frag, None);
+                    for i in 0..scene_frag.len() {
+                        builder[i].append(&scene_frag[i], None);
+                        // builder.append(&scene_frag[i], None);
+                    }
                     params.resolution = Some(resolution);
-                    cached_scene = Some((scene_frag, resolution))
+                    cached_scene.push((scene_frag, resolution))
                 }
                 Err(RecvTimeoutError::Timeout) => params.text.add(
-                    builder,
+                    &mut builder[0],
                     None,
                     48.,
                     None,

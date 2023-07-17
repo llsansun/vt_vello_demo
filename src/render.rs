@@ -21,9 +21,9 @@ pub struct Render {
     ptcl_size: u32,
     width_in_tiles: u32,
     height_in_tiles: u32,
-    fines: Vec<FineResources>,
-    finished_out_image: Option<ImageProxy>,
-    output_images:Vec<ImageProxy>,
+    fine: Option<FineResources>,
+    // finished_out_image: Option<ImageProxy>,
+    // output_images:Option<ImageProxy>,
 }
 
 /// Resources produced by pipeline, needed for fine rasterization.
@@ -194,15 +194,15 @@ impl Render {
     pub fn new() -> Self {
         // These sizes are adequate for paris-30k but should probably be dialed down.
         Render {
-            binning_info_size: (1 << 26) / 4,
+            binning_info_size: (1 << 27) / 4,
             tiles_size: (1 << 24) / TILE_SIZE as u32,
             segments_size: (1 << 26) / SEGMENT_SIZE as u32,
             ptcl_size: (1 << 25) / 4 as u32,
             width_in_tiles: 0,
             height_in_tiles: 0,
-            fines: Vec::new(),
-            finished_out_image: None,
-            output_images:Vec::new(),
+            fine: None,
+            // finished_out_image: None,
+            // output_images:None,
         }
     }
 
@@ -218,7 +218,7 @@ impl Render {
         robust: bool,
     ) -> Recording {
         use crate::encoding::Resolver;
-        self.finished_out_image = Some(ImageProxy::new(params.width, params.height, ImageFormat::Rgba8));
+        // self.finished_out_image = Some(ImageProxy::new(params.width, params.height, ImageFormat::Rgba8));
         let mut recording = Recording::default();
         let mut resolver = Resolver::new();
         let mut packed = vec![];
@@ -259,15 +259,16 @@ impl Render {
         //     layouts.push(layout_onlyone);
         //     layouts.push(layout_onlyone);
         // }
-        if self.output_images.len() < 2{
-            let out_image = ImageProxy::new(params.width, params.height, ImageFormat::Rgba8);
-            let out_image2 = ImageProxy::new(params.width, params.height, ImageFormat::Rgba8);
+        let out_image = ImageProxy::new(params.width, params.height, ImageFormat::Rgba8);
+        // if self.output_images.len() < 2{
+        //     let out_image = ImageProxy::new(params.width, params.height, ImageFormat::Rgba8);
+        //     let out_image2 = ImageProxy::new(params.width, params.height, ImageFormat::Rgba8);
             
-            self.output_images.push(out_image);
-            self.output_images.push(out_image2);
-        }
+        //     self.output_images.push(out_image);
+        //     self.output_images.push(out_image2);
+        // }
         
-        self.fines.clear();
+        // self.fines.clear();
         
         // for i in 0..layouts.len(){
             // let layout = &layouts[i];
@@ -291,7 +292,7 @@ impl Render {
             let n_pathtag = layout.path_tags(&packed).len();
             let pathtag_padded = align_up(n_pathtag, 4 * shaders::PATHTAG_REDUCE_WG);
             let n_paths = layout.n_paths;
-            let n_drawobj = layout.n_draw_objects;
+            let n_drawobj = layout.n_paths;
             let n_clip = layout.n_clips;
     
             let new_width = next_multiple_of(params.width, 16);
@@ -559,21 +560,21 @@ impl Render {
                     ptcl_buf,
                 ],
             );
-            recording.dispatch(
-                shaders.coarse_full,
-                (width_in_bins, height_in_bins, 1),
-                [
-                    config_buf,
-                    scene_buf,
-                    draw_monoid_buf,
-                    bin_header_buf,
-                    info_bin_data_buf,
-                    path_buf,
-                    tile_buf,
-                    bump_buf,
-                    ptcl2_buf,
-                ],
-            );
+            // recording.dispatch(
+            //     shaders.coarse_full,
+            //     (width_in_bins, height_in_bins, 1),
+            //     [
+            //         config_buf,
+            //         scene_buf,
+            //         draw_monoid_buf,
+            //         bin_header_buf,
+            //         info_bin_data_buf,
+            //         path_buf,
+            //         tile_buf,
+            //         bump_buf,
+            //         ptcl2_buf,
+            //     ],
+            // );
             
             recording.free_resource(scene_buf);
             recording.free_resource(draw_monoid_buf);
@@ -581,28 +582,28 @@ impl Render {
             recording.free_resource(path_buf);
             self.width_in_tiles = config.width_in_tiles;
             self.height_in_tiles = config.height_in_tiles;
-            self.fines.push(FineResources {
-                config_buf,
-                bump_buf,
-                tile_buf,
-                segments_buf,
-                ptcl_buf,
-                gradient_image,
-                info_bin_data_buf,
-                image_atlas: ResourceProxy::Image(image_atlas),
-                out_image: self.output_images[0].clone(),
-            });
-            self.fines.push(FineResources {
-                config_buf,
-                bump_buf,
-                tile_buf,
-                segments_buf,
-                ptcl_buf: ptcl2_buf,
-                gradient_image,
-                info_bin_data_buf,
-                image_atlas: ResourceProxy::Image(image_atlas),
-                out_image: self.output_images[1].clone(),
-            });
+            self.fine = Some(FineResources {
+                            config_buf,
+                            bump_buf,
+                            tile_buf,
+                            segments_buf,
+                            ptcl_buf,
+                            gradient_image,
+                            info_bin_data_buf,
+                            image_atlas: ResourceProxy::Image(image_atlas),
+                            out_image,
+                        });
+            // self.fines.push(FineResources {
+            //     config_buf,
+            //     bump_buf,
+            //     tile_buf,
+            //     segments_buf,
+            //     ptcl_buf: ptcl2_buf,
+            //     gradient_image,
+            //     info_bin_data_buf,
+            //     image_atlas: ResourceProxy::Image(image_atlas),
+            //     out_image: self.output_images[1].clone(),
+            // });
             if robust {
                 recording.download(*bump_buf.as_buf().unwrap());
             }
@@ -614,50 +615,52 @@ impl Render {
 
     /// Run fine rasterization assuming the coarse phase succeeded.
     pub fn record_fine(&mut self, shaders: &FullShaders, recording: &mut Recording) {
-        for i in 0..self.fines.len(){
-            let fine = &mut self.fines[i];
-            let mut fine_shaderid = shaders.fine;
-            if i == 1{
-                fine_shaderid = shaders.fine2;
+        // for i in 0..self.fines.len(){
+            if let Some(fine) = &mut self.fine{
+                let mut fine_shaderid = shaders.fine;
+                // if i == 1{
+                //     fine_shaderid = shaders.fine2;
+                // }
+                recording.dispatch(
+                    fine_shaderid,
+                    (self.width_in_tiles, self.height_in_tiles, 1),
+                    [
+                        fine.config_buf,
+                        fine.tile_buf,
+                        fine.segments_buf,
+                        ResourceProxy::Image(fine.out_image),
+                        fine.ptcl_buf,
+                        fine.gradient_image,
+                        fine.info_bin_data_buf,
+                        fine.image_atlas,
+                    ],
+                );
+                recording.free_resource(fine.config_buf);
+                recording.free_resource(fine.tile_buf);
+                recording.free_resource(fine.segments_buf);
+                recording.free_resource(fine.ptcl_buf);
+                recording.free_resource(fine.gradient_image);
+                recording.free_resource(fine.image_atlas);
+                recording.free_resource(fine.info_bin_data_buf);
             }
-            recording.dispatch(
-                fine_shaderid,
-                (self.width_in_tiles, self.height_in_tiles, 1),
-                [
-                    fine.config_buf,
-                    fine.tile_buf,
-                    fine.segments_buf,
-                    ResourceProxy::Image(fine.out_image),
-                    fine.ptcl_buf,
-                    fine.gradient_image,
-                    fine.info_bin_data_buf,
-                    fine.image_atlas,
-                ],
-            );
-            recording.free_resource(fine.config_buf);
-            recording.free_resource(fine.tile_buf);
-            recording.free_resource(fine.segments_buf);
-            recording.free_resource(fine.ptcl_buf);
-            recording.free_resource(fine.gradient_image);
-            recording.free_resource(fine.image_atlas);
-            recording.free_resource(fine.info_bin_data_buf);
-        }
-        if self.fines.len() >= 2{
-            let img1 = ResourceProxy::Image(self.fines[0].out_image);
-            let img2 = ResourceProxy::Image(self.fines[1].out_image);
-            recording.dispatch(
-                shaders.blend_all_output_image,
-                (self.width_in_tiles, self.height_in_tiles, 1),
-                [
-                    // self.fines[0].as_ref().unwrap().config_buf,
-                    ResourceProxy::Image(*self.finished_out_image.as_ref().unwrap()),
-                    img1,
-                    img2,
-                ],
-            );
-            recording.free_resource(img1);
-            recording.free_resource(img2);
-        }
+            
+        // }
+        // if self.fines.len() >= 2{
+        //     let img1 = ResourceProxy::Image(self.fines[0].out_image);
+        //     let img2 = ResourceProxy::Image(self.fines[1].out_image);
+        //     recording.dispatch(
+        //         shaders.blend_all_output_image,
+        //         (self.width_in_tiles, self.height_in_tiles, 1),
+        //         [
+        //             // self.fines[0].as_ref().unwrap().config_buf,
+        //             ResourceProxy::Image(*self.finished_out_image.as_ref().unwrap()),
+        //             img1,
+        //             img2,
+        //         ],
+        //     );
+        //     recording.free_resource(img1);
+        //     recording.free_resource(img2);
+        // }
     }
 
     /// Get the output image.
@@ -668,14 +671,14 @@ impl Render {
         // if self.fines.len() >= 2{
         //     return self.fines[1].out_image;
         // }
-        *self.finished_out_image.as_ref().unwrap()
-        // self.fines[0].out_image
+        // *self.finished_out_image.as_ref().unwrap()
+        self.fine.as_ref().unwrap().out_image
     }
 
     pub fn bump_buf(&self) -> BufProxy {
-        *self.fines[0].bump_buf.as_buf().unwrap()
+        *self.fine.as_ref().unwrap().bump_buf.as_buf().unwrap()
     }
-    pub fn bump_buf2(&self) -> BufProxy {
-        *self.fines[1].bump_buf.as_buf().unwrap()
-    }
+    // pub fn bump_buf2(&self) -> BufProxy {
+    //     *self.fine.bump_buf.as_buf().unwrap()
+    // }
 }

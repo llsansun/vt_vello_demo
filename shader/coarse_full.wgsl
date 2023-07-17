@@ -175,7 +175,7 @@ fn coarse_2_handle(p: Partition,
 
     let width_in_bins = (config.width_in_tiles + N_TILE_X - 1u) / N_TILE_X;
     let bin_ix = width_in_bins * wg_id.y + wg_id.x;
-    let n_partitions = (draw_objs + N_TILE - 1u) / N_TILE;
+    var n_partitions = (draw_objs + N_TILE - 1u) / N_TILE;
 
     let bin_tile_x = N_TILE_X * wg_id.x;
     let bin_tile_y = N_TILE_Y * wg_id.y;
@@ -238,6 +238,55 @@ fn coarse_2_handle(p: Partition,
                 break;
             }
         }
+//         n_partitions = (draw_objs + N_TILE - 1u) / N_TILE;
+//         while true {
+//             let id = local_id.x * N_TILE;
+//             if par.ready_ix == par.wr_ix && par.partition_ix < n_partitions {
+//                 par.part_start_ix = par.ready_ix;
+//                 var count = 0u;
+//                 if par.partition_ix + local_id.x < n_partitions {
+//                     let in_ix = (par.partition_ix + local_id.x) * N_TILE + bin_ix;
+//                     let bin_header = bin_headers[in_ix];
+//                     count = bin_header.element_count;
+//                     sh_part_offsets_2[id] = bin_header.chunk_offset;
+//                 }
+//                 // prefix sum the element counts
+//                 for (var i = 0u; i < firstTrailingBit(WG_SIZE); i += 1u) {
+//                     sh_part_count_2[id] = count;
+//                     workgroupBarrier();
+//                     if local_id.x >= (1u << i) {
+//                         count += sh_part_count_2[id- (1u << i)];
+//                     }
+//                     workgroupBarrier();
+//                 }
+//                 sh_part_count_2[id] = par.part_start_ix + count;
+// #ifdef have_uniform
+//                 par.ready_ix = workgroupUniformLoad(&sh_part_count_2[WG_SIZE - 1u]);
+// #else
+//                 workgroupBarrier();
+//                 par.ready_ix = sh_part_count_2[WG_SIZE - 1u];
+// #endif
+//                 par.partition_ix += WG_SIZE;
+//             }
+//             // use binary search to find draw object to read
+//             var ix = par.rd_ix + local_id.x;
+//             if ix >= par.wr_ix && ix < par.ready_ix {
+//                 var part_ix = 0u;
+//                 for (var i = 0u; i < firstTrailingBit(WG_SIZE); i += 1u) {
+//                     let probe = part_ix + ((N_TILE / 2u) >> i);
+//                     if ix >= sh_part_count_2[probe - 1u] {
+//                         part_ix = probe;
+//                     }
+//                 }
+//                 ix -= select(par.part_start_ix, sh_part_count_2[part_ix - 1u], part_ix > 0u);
+//                 let offset = config.bin_data_start + sh_part_offsets_2[part_ix];
+//                 sh_drawobj_ix_2[id] = info_bin_data[offset + ix];
+//             }
+//             par.wr_ix = min(par.rd_ix + N_TILE, par.ready_ix);
+//             if par.wr_ix - par.rd_ix >= N_TILE || (par.wr_ix >= par.ready_ix && par.partition_ix >= n_partitions) {
+//                 break;
+//             }
+//         }
         // At this point, sh_drawobj_ix_2[0.. par.wr_ix - par.rd_ix] contains merged binning results.
         var tag = DRAWTAG_NOP;
         var drawobj_ix: u32;
@@ -470,12 +519,12 @@ fn main(
     
     cmd_limit_2 = cmd_offset_2 + (PTCL_INITIAL_ALLOC - PTCL_HEADROOM);
 
-    atomicStore(&bump.ptcl, 0u);
-    atomicStore(&bump.blend, 0u);
-    atomicStore(&bump.failed, 0u);
+    // atomicStore(&bump.ptcl, 0u);
+    // atomicStore(&bump.blend, 0u);
+    // atomicStore(&bump.failed, 0u);
     
 
-    var par = Partition(256u, 0u,0u,0u,0u,0u,0u,0u,0u);
+    var par = Partition(0u, 0u,0u,0u,0u,0u,0u,0u,0u);
     // clip state
     // var clip_zero_depth = 0u;
     // var clip_depth = 0u;
@@ -490,8 +539,7 @@ fn main(
     // var max_blend_depth = 0u;
 
 
-    // var partition_ix = 0u;
-    // par = coarse_handle(par, 65535u, local_id, wg_id);
+    // var partition_ix = 0u
     // cmd_offset_2 += 1u;
     cmd_offset_2 = this_tile_ix * PTCL_INITIAL_ALLOC;
     

@@ -38,7 +38,7 @@ use std::convert::Infallible;
 use usvg::NodeExt;
 use vello::kurbo::{Affine, BezPath, Rect};
 use vello::peniko::{Brush, Color, Fill, Stroke};
-use vello::SceneBuilder;
+use vello::{SceneBuilder, SceneFragment};
 
 pub use usvg;
 
@@ -48,8 +48,122 @@ pub use usvg;
 /// Calls [`render_tree_with`] with an error handler implementing the above.
 ///
 /// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features
-pub fn render_tree(sb: &mut SceneBuilder, svg: &usvg::Tree) {
-    render_tree_with(sb, svg, default_error_handler).unwrap_or_else(|e| match e {})
+pub fn render_tree(sbs: &mut Vec<SceneBuilder>, svg: &usvg::Tree) {
+    render_tree_with(sbs, svg, default_error_handler).unwrap_or_else(|e| match e {})
+}
+
+pub fn render_tree_scenes(offset: usize, sb: &mut SceneBuilder, svg: &usvg::Tree){
+    render_scenes_tree_with(sb, offset, svg, default_error_handler).unwrap_or_else(|e| match e {})
+}
+
+
+pub fn render_scenes_tree_with<F: FnMut(&mut SceneBuilder, &usvg::Node) -> Result<(), E>, E>(
+    sb: &mut SceneBuilder,
+    offset: usize,
+    svg: &usvg::Tree,
+    mut on_err: F,
+) -> Result<(), E>{
+    let mut time:usize = 0;
+    // let mut scenes = Vec::new();
+    // for _ in 0..scene_count {
+    //     let scene = SceneFragment::new();
+    //     scenes.push(scene);
+    // }
+    for elt in svg.root.descendants() {
+        // if time % 40000 == 0 {
+        //     // let mut scene = SceneFragment::new();
+        //     let mut builder = SceneBuilder::for_fragment(&mut scenes[time / 40000]);
+        //     sbs.push(builder);
+        // }
+        time+=1;
+        if time < offset {
+            continue;
+        }
+        if time >= offset + 40000{
+            break;
+        }
+        // let index = time / 40000;
+        // let sb = &mut sbs[index];
+        let transform = {
+            let usvg::Transform { a, b, c, d, e, f } = elt.abs_transform();
+            Affine::new([a, b, c, d, e, f])
+        };
+        match &*elt.borrow() {
+            usvg::NodeKind::Group(_) => {}
+            usvg::NodeKind::Path(path) => {
+                let mut local_path = BezPath::new();
+                // The semantics of SVG paths don't line up with `BezPath`; we must manually track initial points
+                let mut just_closed = false;
+                let mut most_recent_initial = (0., 0.);
+                for elt in path.data.segments() {
+                    match elt {
+                        usvg::PathSegment::MoveTo { x, y } => {
+                            if std::mem::take(&mut just_closed) {
+                                local_path.move_to(most_recent_initial);
+                            }
+                            most_recent_initial = (x, y);
+                            local_path.move_to(most_recent_initial)
+                        }
+                        usvg::PathSegment::LineTo { x, y } => {
+                            if std::mem::take(&mut just_closed) {
+                                local_path.move_to(most_recent_initial);
+                            }
+                            local_path.line_to((x, y))
+                        }
+                        usvg::PathSegment::CurveTo {
+                            x1,
+                            y1,
+                            x2,
+                            y2,
+                            x,
+                            y,
+                        } => {
+                            if std::mem::take(&mut just_closed) {
+                                local_path.move_to(most_recent_initial);
+                            }
+                            local_path.curve_to((x1, y1), (x2, y2), (x, y))
+                        }
+                        usvg::PathSegment::ClosePath => {
+                            just_closed = true;
+                            local_path.close_path()
+                        }
+                    }
+                }
+
+                // FIXME: let path.paint_order determine the fill/stroke order.
+
+                if let Some(fill) = &path.fill {
+                    if let Some(brush) = paint_to_brush(&fill.paint, fill.opacity) {
+                        // FIXME: Set the fill rule
+                        sb.fill(Fill::NonZero, transform, &brush, None, &local_path);
+                    } else {
+                        on_err(sb, &elt)?;
+                    }
+                }
+                if let Some(stroke) = &path.stroke {
+                    if let Some(brush) = paint_to_brush(&stroke.paint, stroke.opacity) {
+                        // FIXME: handle stroke options such as linecap, linejoin, etc.
+                        sb.stroke(
+                            &Stroke::new(stroke.width.get() as f32),
+                            transform,
+                            &brush,
+                            None,
+                            &local_path,
+                        );
+                    } else {
+                        on_err(sb, &elt)?;
+                    }
+                }
+            }
+            usvg::NodeKind::Image(_) => {
+                on_err(sb, &elt)?;
+            }
+            usvg::NodeKind::Text(_) => {
+                on_err(sb, &elt)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Append a [`usvg::Tree`] into a Vello [`SceneBuilder`].
@@ -59,11 +173,15 @@ pub fn render_tree(sb: &mut SceneBuilder, svg: &usvg::Tree) {
 ///
 /// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features
 pub fn render_tree_with<F: FnMut(&mut SceneBuilder, &usvg::Node) -> Result<(), E>, E>(
-    sb: &mut SceneBuilder,
+    sbs: &mut Vec<SceneBuilder>,
     svg: &usvg::Tree,
     mut on_err: F,
 ) -> Result<(), E> {
+    let mut time:usize = 0;
     for elt in svg.root.descendants() {
+        time+=1;
+        let index = time / 40000;
+        let mut sb = &mut sbs[index];
         let transform = {
             let usvg::Transform { a, b, c, d, e, f } = elt.abs_transform();
             Affine::new([a, b, c, d, e, f])

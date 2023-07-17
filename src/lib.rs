@@ -53,6 +53,7 @@ pub struct Renderer {
     shaders: FullShaders,
     blit: Option<BlitPipeline>,
     target: Option<TargetTexture>,
+    target2: Option<TargetTexture>,
 }
 
 /// Parameters used in a single render that are configurable by the client.
@@ -85,6 +86,7 @@ impl Renderer {
             shaders,
             blit,
             target: None,
+            target2: None,
         })
     }
 
@@ -211,7 +213,7 @@ impl Renderer {
         let recording = render.render_encoding_coarse(encoding, &self.shaders, params, true);
         let target = render.out_image();
         let bump_buf = render.bump_buf();
-        let bump_buf2 = render.bump_buf2();
+        // let bump_buf2 = render.bump_buf2();
         self.engine.run_recording(device, queue, &recording, &[])?;
         if let Some(bump_buf) = self.engine.get_download(bump_buf) {
             let buf_slice = bump_buf.slice(..);
@@ -228,7 +230,7 @@ impl Renderer {
         // TODO: apply logic to determine whether we need to rerun coarse, and also
         // allocate the blend stack as needed.
         self.engine.free_download(bump_buf);
-        self.engine.free_download(bump_buf2);
+        // self.engine.free_download(bump_buf2);
         // Maybe clear to reuse allocation?
         let mut recording = Recording::default();
         render.record_fine(&self.shaders, &mut recording);
@@ -244,8 +246,9 @@ impl Renderer {
         device: &Device,
         queue: &Queue,
         scene: &Scene,
-        surface: &SurfaceTexture,
+        surface_view: &TextureView,
         params: &RenderParams,
+        is_clear: bool,
     ) -> Result<()> {
         let width = params.width;
         let height = params.height;
@@ -267,16 +270,25 @@ impl Renderer {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
-            let surface_view = surface
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &blit.bind_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&target.view),
-                }],
+                },
+                if self.target2.is_some(){
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&self.target2.as_ref().unwrap().view),
+                    }
+                }else{
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&target.view),
+                    }
+                }
+                ],
             });
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -284,7 +296,11 @@ impl Renderer {
                     view: &surface_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::default()),
+                        load: if is_clear{
+                            wgpu::LoadOp::Clear(wgpu::Color::default())
+                        }else{
+                            wgpu::LoadOp::Load
+                        },
                         store: true,
                     },
                 })],
@@ -295,7 +311,11 @@ impl Renderer {
             render_pass.draw(0..6, 0..1);
         }
         queue.submit(Some(encoder.finish()));
-        self.target = Some(target);
+        if is_clear{
+            self.target2 = Some(target);
+        }else{
+            self.target = Some(target);
+        }
         Ok(())
     }
 }
@@ -360,11 +380,14 @@ impl BlitPipeline {
             
             @group(0) @binding(0)
             var fine_output: texture_2d<f32>;
+            @group(0) @binding(1)
+            var fine2_output: texture_2d<f32>;
             
             @fragment
             fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
                 let rgba_sep = textureLoad(fine_output, vec2<i32>(pos.xy), 0);
-                return vec4(rgba_sep.rgb * rgba_sep.a, rgba_sep.a);
+                let rgba2_sep = textureLoad(fine2_output, vec2<i32>(pos.xy), 0);
+                return vec4(rgba_sep.rgb * rgba_sep.a + rgba2_sep.rgb * (1.0 - rgba_sep.a) * rgba2_sep.a, max(rgba_sep.a, rgba2_sep.a));
             }
         "#;
 
@@ -377,6 +400,15 @@ impl BlitPipeline {
             entries: &[wgpu::BindGroupLayoutEntry {
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 binding: 0,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },wgpu::BindGroupLayoutEntry {
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                binding: 1,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,

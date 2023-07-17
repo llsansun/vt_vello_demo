@@ -77,6 +77,10 @@ impl<'a> SceneBuilder<'a> {
         Self::new(&mut scene.data, false)
     }
 
+    pub fn scene(&self) -> &Encoding {
+        &self.scene
+    }
+
     /// Creates a new builder for filling a scene fragment. Any current content in
     /// the fragment will be cleared.    
     pub fn for_fragment(fragment: &'a mut SceneFragment) -> Self {
