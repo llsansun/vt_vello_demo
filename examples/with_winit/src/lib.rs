@@ -95,10 +95,12 @@ fn run(
     #[cfg(not(target_arch = "wasm32"))]
     let mut cached_window = None;
 
-    let mut scene = Scene::new();
-    let mut scene2 = Scene::new();
-    let mut fragment = SceneFragment::new();
-    let mut fragment2 = SceneFragment::new();
+    // let mut scene = Scene::new();
+    // let mut scene2 = Scene::new();
+    // let mut fragment = SceneFragment::new();
+    // let mut fragment2 = SceneFragment::new();
+    let mut all_scenes = Vec::new();
+    let mut all_fragments = Vec::new();
     let mut simple_text = SimpleText::new();
     let mut images = ImageCache::new();
     let mut stats = stats::Stats::new();
@@ -290,9 +292,9 @@ fn run(
                     .window
                     .set_title(&format!("Vello demo - {}", example_scene.config.name));
             }
-            let builder_1 = SceneBuilder::for_fragment(&mut fragment);
-            let builder_2 = SceneBuilder::for_fragment(&mut fragment2);
-            let mut builders = vec![builder_1, builder_2];
+
+            all_scenes.clear();
+            all_fragments.clear();
             let mut scene_params = SceneParams {
                 time: start.elapsed().as_secs_f64(),
                 text: &mut simple_text,
@@ -301,7 +303,7 @@ fn run(
                 base_color: None,
                 interactive: true,
             };
-            (example_scene.function)(&mut builders, &mut scene_params);
+            (example_scene.function)(&mut all_fragments, &mut scene_params);
 
             // If the user specifies a base color in the CLI we use that. Otherwise we use any
             // color specified by the scene. The default is black.
@@ -315,7 +317,7 @@ fn run(
                 width,
                 height,
             };
-            let mut builder = SceneBuilder::for_scene(&mut scene);
+
             let mut transform = transform;
             if let Some(resolution) = scene_params.resolution {
                 // Automatically scale the rendering to fill as much of the window as possible
@@ -324,148 +326,190 @@ fn run(
                 let scale_factor = (factor.x / resolution.x).min(factor.y / resolution.y);
                 transform = transform * Affine::scale(scale_factor);
             }
-            builder.append(&fragment, Some(transform));
+
+            for i in 0..all_fragments.len(){
+                let mut scene = Scene::new();
+                let mut builder = SceneBuilder::for_scene(&mut scene);
+                builder.append_data(all_fragments[i].get_scene(), Some(transform));
+                all_scenes.push(scene);
+            }
+            // let mut builder = SceneBuilder::for_scene(&mut scene);
+            
+            // builder.append(&fragment, Some(transform));
 
             
-            let mut builder2 = SceneBuilder::for_scene(&mut scene2);
-            builder2.append(&fragment2, Some(transform));
-
-            let mut text = SimpleText::new();
-            text.add_run(
-                &mut builder2,
-                None,
-                25.,
-                Color::WHITE,
-                transform,
-                // Affine::translate((110.0, 700.0)),
-                // Add a skew to simulate an oblique font.
-                Some(Affine::skew(20f64.to_radians().tan(), 0.0)),
-                &Stroke::new(1.0),
-                "hello world",
-            );
-
-            let flower_image: &[u8] = include_bytes!("../../assets/splash-flower.jpg");
-            let piet_logo = scene_params.
-                images
-                .from_bytes(flower_image.as_ptr() as usize, flower_image)
-                .unwrap();
-            builder2.draw_image(
-                &piet_logo,
-                transform * Affine::translate((800.0, 50.0)) * Affine::rotate(20f64.to_radians()),
-            );
-
+            // let mut builder2 = SceneBuilder::for_scene(&mut scene2);
+            // builder2.append(&fragment2, Some(transform));
             
-            use PathEl::*;
-            let graph_max_height = 100.;
-            let graph_max_width = 100.;
-            let marker = [
-                MoveTo((0., graph_max_height).into()),
-                LineTo((graph_max_width, graph_max_height).into()),
-            ];
-            builder2.stroke(
-                &Stroke::new((graph_max_width) as f32),
-                transform*Affine::translate((400., 100.)),
-                Color::WHITE,
-                None,
-                &marker,
-            );
-
-            
-            let marker2 = [
-                MoveTo((0., graph_max_height).into()),
-                LineTo((graph_max_width, graph_max_height).into()),
-                QuadTo((graph_max_width + 50., graph_max_height * 2. - 50.).into(),(graph_max_width, graph_max_height * 2.).into()),
-                LineTo((0., graph_max_height * 2.).into()),
-                CurveTo((-50., graph_max_height - 20.).into(),(-50., graph_max_height - 20.).into(),(0., graph_max_height).into()),
-                ClosePath,
-            ];
-            builder2.stroke(
-                &Stroke::new((1.) as f32),
-                transform*Affine::translate((100., 100.)),
-                Color::WHITE,
-                None,
-                &marker2,
-            );
-
-            let marker3 = [
-                MoveTo((0., graph_max_height).into()),
-                LineTo((graph_max_width, graph_max_height).into()),
-                QuadTo((graph_max_width + 50., graph_max_height * 2. - 50.).into(),(graph_max_width, graph_max_height * 2.).into()),
-                LineTo((0., graph_max_height * 2.).into()),
-                CurveTo((-50., graph_max_height - 20.).into(),(-50., graph_max_height - 20.).into(),(0., graph_max_height).into()),
-                ClosePath,
-            ];
-            let fill = Fill::EvenOdd;
-            builder2.fill(fill, transform*Affine::translate((30., 100.)), Color::RED, None, &marker3);
-            
-            if stats_shown {
-                snapshot.draw_layer(
-                    &mut builder,
-                    &mut scene_params.text,
-                    width as f64,
-                    height as f64,
-                    stats.samples(),
-                    vsync_on,
+            if all_scenes.len() > 0{
+                all_fragments.push(SceneFragment::new());
+                let index = all_fragments.len() - 1;
+                let builder = &mut SceneBuilder::for_fragment(&mut all_fragments[index]);
+                let mut text = SimpleText::new();
+                text.add_run(
+                    builder,
+                    None,
+                    25.,
+                    Color::WHITE,
+                    transform,
+                    // Affine::translate((110.0, 700.0)),
+                    // Add a skew to simulate an oblique font.
+                    Some(Affine::skew(20f64.to_radians().tan(), 0.0)),
+                    &Stroke::new(1.0),
+                    "hello world",
                 );
+
+                let flower_image: &[u8] = include_bytes!("../../assets/splash-flower.jpg");
+                let piet_logo = scene_params.
+                    images
+                    .from_bytes(flower_image.as_ptr() as usize, flower_image)
+                    .unwrap();
+                builder.draw_image(
+                    &piet_logo,
+                    transform * Affine::translate((800.0, 50.0)) * Affine::rotate(20f64.to_radians()),
+                );
+
+                
+                use PathEl::*;
+                let graph_max_height = 100.;
+                let graph_max_width = 100.;
+                let marker = [
+                    MoveTo((0., graph_max_height).into()),
+                    LineTo((graph_max_width, graph_max_height).into()),
+                ];
+                builder.stroke(
+                    &Stroke::new((graph_max_width) as f32),
+                    transform*Affine::translate((400., 100.)),
+                    Color::WHITE,
+                    None,
+                    &marker,
+                );
+
+                
+                let marker2 = [
+                    MoveTo((0., graph_max_height).into()),
+                    LineTo((graph_max_width, graph_max_height).into()),
+                    QuadTo((graph_max_width + 50., graph_max_height * 2. - 50.).into(),(graph_max_width, graph_max_height * 2.).into()),
+                    LineTo((0., graph_max_height * 2.).into()),
+                    CurveTo((-50., graph_max_height - 20.).into(),(-50., graph_max_height - 20.).into(),(0., graph_max_height).into()),
+                    ClosePath,
+                ];
+                builder.stroke(
+                    &Stroke::new((1.) as f32),
+                    transform*Affine::translate((100., 100.)),
+                    Color::WHITE,
+                    None,
+                    &marker2,
+                );
+
+                let marker3 = [
+                    MoveTo((0., graph_max_height).into()),
+                    LineTo((graph_max_width, graph_max_height).into()),
+                    QuadTo((graph_max_width + 50., graph_max_height * 2. - 50.).into(),(graph_max_width, graph_max_height * 2.).into()),
+                    LineTo((0., graph_max_height * 2.).into()),
+                    CurveTo((-50., graph_max_height - 20.).into(),(-50., graph_max_height - 20.).into(),(0., graph_max_height).into()),
+                    ClosePath,
+                ];
+                let fill = Fill::EvenOdd;
+                builder.fill(fill, transform*Affine::translate((30., 100.)), Color::RED, None, &marker3);
+                
+                if stats_shown {
+                    snapshot.draw_layer(
+                        builder,
+                        &mut scene_params.text,
+                        width as f64,
+                        height as f64,
+                        stats.samples(),
+                        vsync_on,
+                    );
+                }
+                let index = all_scenes.len() - 1;
+                let mut scene_builder = SceneBuilder::for_scene_dont_reset(&mut all_scenes[index]);
+                scene_builder.append_data(builder.get_scene(), None);
             }
             
-            let surface_texture = render_state
-                .surface
-                .surface
-                .get_current_texture()
-                .expect("failed to get surface texture");
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let surface_view = &surface_texture
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-                vello::block_on_wgpu(
-                    &device_handle.device,
-                    renderers[render_state.surface.dev_id]
-                        .as_mut()
-                        .unwrap()
-                        .render_to_surface_async(
+            if all_scenes.len() > 0{
+                let surface_texture = render_state
+                    .surface
+                    .surface
+                    .get_current_texture()
+                    .expect("failed to get surface texture");
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let surface_view = &surface_texture
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+                    for i in 0..all_scenes.len(){
+                        vello::block_on_wgpu(
                             &device_handle.device,
-                            &device_handle.queue,
-                            &scene,
-                            &surface_view,
-                            &render_params,
-                            true,
-                        ),
-                )
-                .expect("failed to render to surface");
-                vello::block_on_wgpu(
-                    &device_handle.device,
-                    renderers[render_state.surface.dev_id]
-                        .as_mut()
-                        .unwrap()
-                        .render_to_surface_async(
-                            &device_handle.device,
-                            &device_handle.queue,
-                            &scene2,
-                            &surface_view,
-                            &render_params,
-                            false,
-                        ),
-                )
-                .expect("failed to render to surface");
+                            renderers[render_state.surface.dev_id]
+                                .as_mut()
+                                .unwrap()
+                                .render_to_surface_async(
+                                    &device_handle.device,
+                                    &device_handle.queue,
+                                    &all_scenes[i],
+                                    &surface_view,
+                                    &render_params,
+                                    if i == 0{
+                                        true
+                                    }else{
+                                        false
+                                    },
+                                ),
+                        )
+                        .expect("failed to render to surface");
+                    }
+                    
+                    // vello::block_on_wgpu(
+                    //     &device_handle.device,
+                    //     renderers[render_state.surface.dev_id]
+                    //         .as_mut()
+                    //         .unwrap()
+                    //         .render_to_surface_async(
+                    //             &device_handle.device,
+                    //             &device_handle.queue,
+                    //             &scene,
+                    //             &surface_view,
+                    //             &render_params,
+                    //             true,
+                    //         ),
+                    // )
+                    // .expect("failed to render to surface");
+                    // vello::block_on_wgpu(
+                    //     &device_handle.device,
+                    //     renderers[render_state.surface.dev_id]
+                    //         .as_mut()
+                    //         .unwrap()
+                    //         .render_to_surface_async(
+                    //             &device_handle.device,
+                    //             &device_handle.queue,
+                    //             &scene2,
+                    //             &surface_view,
+                    //             &render_params,
+                    //             false,
+                    //         ),
+                    // )
+                    // .expect("failed to render to surface");
+                }
+                // Note: in the wasm case, we're currently not running the robust
+                // pipeline, as it requires more async wiring for the readback.
+                #[cfg(target_arch = "wasm32")]
+                renderers[render_state.surface.dev_id]
+                    .as_mut()
+                    .unwrap()
+                    .render_to_surface(
+                        &device_handle.device,
+                        &device_handle.queue,
+                        &scene,
+                        &surface_texture,
+                        &render_params,
+                    )
+                    .expect("failed to render to surface");
+                surface_texture.present();
+                device_handle.device.poll(wgpu::Maintain::Poll);
             }
-            // Note: in the wasm case, we're currently not running the robust
-            // pipeline, as it requires more async wiring for the readback.
-            #[cfg(target_arch = "wasm32")]
-            renderers[render_state.surface.dev_id]
-                .as_mut()
-                .unwrap()
-                .render_to_surface(
-                    &device_handle.device,
-                    &device_handle.queue,
-                    &scene,
-                    &surface_texture,
-                    &render_params,
-                )
-                .expect("failed to render to surface");
-            surface_texture.present();
-            device_handle.device.poll(wgpu::Maintain::Poll);
+            
 
             let new_time = Instant::now();
             stats.add_sample(stats::Sample {

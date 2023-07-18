@@ -88,7 +88,7 @@ fn example_scene_of(file: PathBuf) -> ExampleScene {
 pub fn svg_function_of<R: AsRef<str>>(
     name: String,
     contents: impl FnOnce() -> R + Send + 'static,
-) -> impl FnMut(&mut Vec<SceneBuilder>, &mut SceneParams) {
+) -> impl FnMut(&mut Vec<SceneFragment>, &mut SceneParams) {
     fn render_svg_contents(name: &str, contents: &str) -> (Vec<SceneFragment>, Vec2) {
         let start = Instant::now();
         let svg = usvg::Tree::from_str(&contents, &usvg::Options::default())
@@ -105,7 +105,7 @@ pub fn svg_function_of<R: AsRef<str>>(
         eprintln!("Rendered svg {name} in {:?}", start.elapsed());
         (scenes, resolution)
     }
-    let mut cached_scene: Vec<(_, _)> = Vec::<(_, _)>::new();
+    let mut cached_scene: Option<(_, _)> = None;
     #[cfg(not(target_arch = "wasm32"))]
     let (tx, rx) = std::sync::mpsc::channel();
     #[cfg(not(target_arch = "wasm32"))]
@@ -113,30 +113,26 @@ pub fn svg_function_of<R: AsRef<str>>(
     #[cfg(not(target_arch = "wasm32"))]
     let mut has_started_parse = false;
     let mut contents = Some(contents);
-    move |builder, params| {
-        if cached_scene.len() != 0{
-            for i in 0..cached_scene.len() {
-                let (scene_frags, resolution): &(Vec<SceneFragment>, _) = &cached_scene[i];
-                for j in 0..scene_frags.len() {
-                    builder[j].append(&scene_frags[j], None);
-                }
-                // builder[i].append(&scene_frag, None);
-                // builder.append(&scene_frag[i], None);
-                params.resolution = Some(*resolution);
+    move |scenes, params| {
+        if cached_scene.is_some(){
+            let (scene_frag, resolution): &(Vec<SceneFragment>, _) = cached_scene.as_ref().unwrap();
+            
+            for j in 0..scene_frag.len() {
+                scenes.push(scene_frag[j].clone());
             }
-            // builder.append(&scene_frag, None);
+            params.resolution = Some(*resolution);
             return;
         }
         if cfg!(target_arch = "wasm32") || !params.interactive {
             let contents = contents.take().unwrap();
             let contents = contents();
             let (scene_frag, resolution) = render_svg_contents(&name, contents.as_ref());
+            
             for i in 0..scene_frag.len() {
-                builder[i].append(&scene_frag[i], None);
-                // builder.append(&scene_frag[i], None);
-                params.resolution = Some(resolution);
+                scenes.push(scene_frag[i].clone());
             }
-            cached_scene.push((scene_frag, resolution));
+            params.resolution = Some(resolution);
+            cached_scene = Some((scene_frag, resolution));
             // builder.append(&scene_frag, None);
             return;
         }
@@ -160,22 +156,23 @@ pub fn svg_function_of<R: AsRef<str>>(
             use std::sync::mpsc::RecvTimeoutError;
             match recv {
                 Result::Ok((scene_frag, resolution)) => {
-                    // builder.append(&scene_frag, None);
                     for i in 0..scene_frag.len() {
-                        builder[i].append(&scene_frag[i], None);
-                        // builder.append(&scene_frag[i], None);
+                        scenes.push(scene_frag[i].clone());
                     }
                     params.resolution = Some(resolution);
-                    cached_scene.push((scene_frag, resolution))
+                    cached_scene = Some((scene_frag, resolution));
                 }
-                Err(RecvTimeoutError::Timeout) => params.text.add(
-                    &mut builder[0],
-                    None,
-                    48.,
-                    None,
-                    vello::kurbo::Affine::translate((110.0, 600.0)),
-                    &format!("Loading {name}"),
-                ),
+                Err(RecvTimeoutError::Timeout) => 
+                    println!("Loading {name}")
+                // params.text.add(
+                //     &mut builder[0],
+                //     None,
+                //     48.,
+                //     None,
+                //     vello::kurbo::Affine::translate((110.0, 600.0)),
+                //     &format!("Loading {name}"),
+                // )
+                ,
                 Err(RecvTimeoutError::Disconnected) => {
                     panic!()
                 }

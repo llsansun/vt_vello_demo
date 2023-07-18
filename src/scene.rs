@@ -41,7 +41,7 @@ impl Scene {
 pub const SCENE_TOTAL_PATH_COUNT: usize = 60000;
 
 /// Encoded definition of a scene fragment and associated resources.
-#[derive(Default)]
+#[derive(Default,Clone)]
 pub struct SceneFragment {
     data: Encoding,
 }
@@ -55,6 +55,10 @@ impl SceneFragment {
     /// Returns true if the fragment does not contain any paths.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
+    }
+
+    pub fn get_scene(&self) -> &Encoding {
+        &self.data
     }
 
     /// Returns the the entire sequence of points in the scene fragment.
@@ -79,7 +83,11 @@ impl<'a> SceneBuilder<'a> {
         Self::new(&mut scene.data, false)
     }
 
-    pub fn scene(&self) -> &Encoding {
+    pub fn for_scene_dont_reset(scene: &'a mut Scene) -> Self {
+        Self { scene: &mut scene.data }
+    }
+
+    pub fn get_scene(&self) -> &Encoding {
         &self.scene
     }
 
@@ -195,6 +203,12 @@ impl<'a> SceneBuilder<'a> {
     pub fn append(&mut self, fragment: &SceneFragment, transform: Option<Affine>) {
         self.scene.append(
             &fragment.data,
+            &transform.map(|xform| Transform::from_kurbo(&xform)),
+        );
+    }
+    pub fn append_data(&mut self, data: &Encoding, transform: Option<Affine>) {
+        self.scene.append(
+            data,
             &transform.map(|xform| Transform::from_kurbo(&xform)),
         );
     }

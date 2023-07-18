@@ -13,7 +13,7 @@ pub use simple_text::SimpleText;
 pub use svg::{default_scene, scene_from_files};
 // pub use test_scenes::test_scenes;
 
-use vello::{kurbo::Vec2, peniko::Color, SceneBuilder,};
+use vello::{kurbo::Vec2, peniko::Color, SceneBuilder, SceneFragment,};
 
 pub struct SceneParams<'a> {
     pub time: f64,
@@ -34,7 +34,7 @@ pub struct SceneConfig {
 }
 
 pub struct ExampleScene {
-    pub function: Box<dyn FnMut(&mut Vec<SceneBuilder>, &mut SceneParams)>,
+    pub function: Box<dyn FnMut(&mut Vec<SceneFragment>, &mut SceneParams)>,
     pub config: SceneConfig,
 }
 
