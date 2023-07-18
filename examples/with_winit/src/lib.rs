@@ -317,11 +317,12 @@ fn run(
             // If the user specifies a base color in the CLI we use that. Otherwise we use any
             // color specified by the scene. The default is black.
             let render_params = vello::RenderParams {
-                base_color: args
-                    .args
-                    .base_color
-                    .or(scene_params.base_color)
-                    .unwrap_or(Color::BLACK),
+                // base_color: args
+                //     .args
+                //     .base_color
+                //     .or(scene_params.base_color)
+                //     .unwrap_or(Color::BLACK),
+                base_color: Color{r: 0, g: 0, b: 0, a: 0},
                 width,
                 height,
             };
