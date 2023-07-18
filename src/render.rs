@@ -22,8 +22,6 @@ pub struct Render {
     width_in_tiles: u32,
     height_in_tiles: u32,
     fine: Option<FineResources>,
-    // finished_out_image: Option<ImageProxy>,
-    // output_images:Option<ImageProxy>,
 }
 
 /// Resources produced by pipeline, needed for fine rasterization.
@@ -201,8 +199,6 @@ impl Render {
             width_in_tiles: 0,
             height_in_tiles: 0,
             fine: None,
-            // finished_out_image: None,
-            // output_images:None,
         }
     }
 
@@ -224,443 +220,347 @@ impl Render {
         let mut packed = vec![];
         let (layout, ramps, images) = resolver.resolve(encoding, &mut packed);
         
-        
-        // let mut layouts = Vec::new();
-        // if layout_onlyone.n_paths >= 65535{
-        //     let layout0 = Layout{
-        //         path_tag_base: layout_onlyone.path_tag_base,
-        //         path_data_base: layout_onlyone.path_data_base,
-        //         n_paths: 65535,
-        //         n_draw_objects: 65535,
-        //         n_clips: layout_onlyone.n_clips,
-        //         bin_data_start: layout_onlyone.bin_data_start,
-        //         draw_tag_base: layout_onlyone.draw_tag_base,
-        //         draw_data_base: layout_onlyone.draw_data_base,
-        //         transform_base: layout_onlyone.transform_base,
-        //         linewidth_base: layout_onlyone.linewidth_base,
-        //     }; 
-            
-        //     let layout1 = Layout{
-        //         path_tag_base: layout_onlyone.path_tag_base,
-        //         path_data_base: layout_onlyone.path_data_base,
-        //         n_paths: layout_onlyone.n_paths,
-        //         n_draw_objects: layout_onlyone.n_paths,
-        //         n_clips: layout_onlyone.n_clips,
-        //         bin_data_start: layout_onlyone.bin_data_start,
-        //         draw_tag_base: layout_onlyone.draw_tag_base,
-        //         draw_data_base: layout_onlyone.draw_data_base,
-        //         transform_base: layout_onlyone.transform_base,
-        //         linewidth_base: layout_onlyone.linewidth_base,
-        //     };
-        //     layouts.push(layout1);
-        //     // layouts.push(layout1);
-        // }
-        // else{
-        //     layouts.push(layout_onlyone);
-        //     layouts.push(layout_onlyone);
-        // }
         let out_image = ImageProxy::new(params.width, params.height, ImageFormat::Rgba8);
-        // if self.output_images.len() < 2{
-        //     let out_image = ImageProxy::new(params.width, params.height, ImageFormat::Rgba8);
-        //     let out_image2 = ImageProxy::new(params.width, params.height, ImageFormat::Rgba8);
-            
-        //     self.output_images.push(out_image);
-        //     self.output_images.push(out_image2);
-        // }
         
-        // self.fines.clear();
+        let gradient_image = if ramps.height == 0 {
+            ResourceProxy::new_image(1, 1, ImageFormat::Rgba8)
+        } else {
+            let data: &[u8] = bytemuck::cast_slice(ramps.data);
+            ResourceProxy::Image(recording.upload_image(
+                ramps.width,
+                ramps.height,
+                ImageFormat::Rgba8,
+                data,
+            ))
+        };
+        let image_atlas = if images.images.is_empty() {
+            ImageProxy::new(1, 1, ImageFormat::Rgba8)
+        } else {
+            ImageProxy::new(images.width, images.height, ImageFormat::Rgba8)
+        };
+        // TODO: calculate for real when we do rectangles
+        let n_pathtag = layout.path_tags(&packed).len();
+        let pathtag_padded = align_up(n_pathtag, 4 * shaders::PATHTAG_REDUCE_WG);
+        let n_paths = layout.n_paths;
+        let n_drawobj = layout.n_paths;
+        let n_clip = layout.n_clips;
+
+        let new_width = next_multiple_of(params.width, 16);
+        let new_height = next_multiple_of(params.height, 16);
+
+        let info_size = layout.bin_data_start;
+        let config = crate::encoding::Config {
+            width_in_tiles: new_width / 16,
+            height_in_tiles: new_height / 16,
+            target_width: params.width,
+            target_height: params.height,
+            base_color: params.base_color.to_premul_u32(),
+            binning_size: self.binning_info_size - info_size,
+            tiles_size: self.tiles_size,
+            segments_size: self.segments_size,
+            ptcl_size: self.ptcl_size,
+            layout,
+        };
+        for image in images.images {
+            recording.write_image(
+                image_atlas,
+                image.1,
+                image.2,
+                image.0.width,
+                image.0.height,
+                image.0.data.data(),
+            );
+        }
+        // println!("{:?}", config);
+        let scene_buf = ResourceProxy::Buf(recording.upload("scene", packed.clone()));
+        let config_buf =
+            ResourceProxy::Buf(recording.upload_uniform("config", bytemuck::bytes_of(&config)));
+        let info_bin_data_buf = ResourceProxy::new_buf(
+            (info_size + config.binning_size) as u64 * 4,
+            "info_bin_data_buf",
+        );
+        let tile_buf = ResourceProxy::new_buf(config.tiles_size as u64 * TILE_SIZE, "tile_buf");
+        let segments_buf =
+            ResourceProxy::new_buf(config.segments_size as u64 * SEGMENT_SIZE, "segments_buf");
+        let ptcl_buf = ResourceProxy::new_buf(config.ptcl_size as u64 * 4, "ptcl_buf");
         
-        // for i in 0..layouts.len(){
-            // let layout = &layouts[i];
-            let gradient_image = if ramps.height == 0 {
-                ResourceProxy::new_image(1, 1, ImageFormat::Rgba8)
-            } else {
-                let data: &[u8] = bytemuck::cast_slice(ramps.data);
-                ResourceProxy::Image(recording.upload_image(
-                    ramps.width,
-                    ramps.height,
-                    ImageFormat::Rgba8,
-                    data,
-                ))
-            };
-            let image_atlas = if images.images.is_empty() {
-                ImageProxy::new(1, 1, ImageFormat::Rgba8)
-            } else {
-                ImageProxy::new(images.width, images.height, ImageFormat::Rgba8)
-            };
-            // TODO: calculate for real when we do rectangles
-            let n_pathtag = layout.path_tags(&packed).len();
-            let pathtag_padded = align_up(n_pathtag, 4 * shaders::PATHTAG_REDUCE_WG);
-            let n_paths = layout.n_paths;
-            let n_drawobj = layout.n_paths;
-            let n_clip = layout.n_clips;
-    
-            let new_width = next_multiple_of(params.width, 16);
-            let new_height = next_multiple_of(params.height, 16);
-    
-            let info_size = layout.bin_data_start;
-            let config = crate::encoding::Config {
-                width_in_tiles: new_width / 16,
-                height_in_tiles: new_height / 16,
-                target_width: params.width,
-                target_height: params.height,
-                base_color: params.base_color.to_premul_u32(),
-                binning_size: self.binning_info_size - info_size,
-                tiles_size: self.tiles_size,
-                segments_size: self.segments_size,
-                ptcl_size: self.ptcl_size,
-                layout,
-            };
-            for image in images.images {
-                recording.write_image(
-                    image_atlas,
-                    image.1,
-                    image.2,
-                    image.0.width,
-                    image.0.height,
-                    image.0.data.data(),
-                );
-            }
-            // println!("{:?}", config);
-            let scene_buf = ResourceProxy::Buf(recording.upload("scene", packed.clone()));
-            let config_buf =
-                ResourceProxy::Buf(recording.upload_uniform("config", bytemuck::bytes_of(&config)));
-            let info_bin_data_buf = ResourceProxy::new_buf(
-                (info_size + config.binning_size) as u64 * 4,
-                "info_bin_data_buf",
-            );
-            let tile_buf = ResourceProxy::new_buf(config.tiles_size as u64 * TILE_SIZE, "tile_buf");
-            let segments_buf =
-                ResourceProxy::new_buf(config.segments_size as u64 * SEGMENT_SIZE, "segments_buf");
-            let ptcl_buf = ResourceProxy::new_buf(config.ptcl_size as u64 * 4, "ptcl_buf");
-            let ptcl2_buf = ResourceProxy::new_buf(config.ptcl_size as u64 * 4, "ptcl2_buf");
-    
-            let pathtag_wgs = pathtag_padded / (4 * shaders::PATHTAG_REDUCE_WG as usize);
-            let pathtag_large = pathtag_wgs > shaders::PATHTAG_REDUCE_WG as usize;
-            let reduced_size = if pathtag_large {
-                align_up(pathtag_wgs, shaders::PATHTAG_REDUCE_WG)
-            } else {
-                pathtag_wgs
-            };
-            let reduced_buf =
-                ResourceProxy::new_buf(reduced_size as u64 * TAG_MONOID_FULL_SIZE, "reduced_buf");
-            // TODO: really only need pathtag_wgs - 1
+        let pathtag_wgs = pathtag_padded / (4 * shaders::PATHTAG_REDUCE_WG as usize);
+        let pathtag_large = pathtag_wgs > shaders::PATHTAG_REDUCE_WG as usize;
+        let reduced_size = if pathtag_large {
+            align_up(pathtag_wgs, shaders::PATHTAG_REDUCE_WG)
+        } else {
+            pathtag_wgs
+        };
+        let reduced_buf =
+            ResourceProxy::new_buf(reduced_size as u64 * TAG_MONOID_FULL_SIZE, "reduced_buf");
+        // TODO: really only need pathtag_wgs - 1
+        recording.dispatch(
+            shaders.pathtag_reduce,
+            (pathtag_wgs as u32, 1, 1),
+            [config_buf, scene_buf, reduced_buf],
+        );
+        let mut pathtag_parent = reduced_buf;
+        let mut large_pathtag_bufs = None;
+        if pathtag_large {
+            let reduced2_size = shaders::PATHTAG_REDUCE_WG as usize;
+            let reduced2_buf =
+                ResourceProxy::new_buf(reduced2_size as u64 * TAG_MONOID_FULL_SIZE, "reduced2_buf");
             recording.dispatch(
-                shaders.pathtag_reduce,
-                (pathtag_wgs as u32, 1, 1),
-                [config_buf, scene_buf, reduced_buf],
+                shaders.pathtag_reduce2,
+                (reduced2_size as u32, 1, 1),
+                [reduced_buf, reduced2_buf],
             );
-            let mut pathtag_parent = reduced_buf;
-            let mut large_pathtag_bufs = None;
-            if pathtag_large {
-                let reduced2_size = shaders::PATHTAG_REDUCE_WG as usize;
-                let reduced2_buf =
-                    ResourceProxy::new_buf(reduced2_size as u64 * TAG_MONOID_FULL_SIZE, "reduced2_buf");
-                recording.dispatch(
-                    shaders.pathtag_reduce2,
-                    (reduced2_size as u32, 1, 1),
-                    [reduced_buf, reduced2_buf],
-                );
-                let reduced_scan_buf = ResourceProxy::new_buf(
-                    pathtag_wgs as u64 * TAG_MONOID_FULL_SIZE,
-                    "reduced_scan_buf",
-                );
-                recording.dispatch(
-                    shaders.pathtag_scan1,
-                    (reduced_size as u32 / shaders::PATHTAG_REDUCE_WG, 1, 1),
-                    [reduced_buf, reduced2_buf, reduced_scan_buf],
-                );
-                pathtag_parent = reduced_scan_buf;
-                large_pathtag_bufs = Some((reduced2_buf, reduced_scan_buf));
-            }
-    
-            let tagmonoid_buf = ResourceProxy::new_buf(
-                pathtag_wgs as u64 * shaders::PATHTAG_REDUCE_WG as u64 * TAG_MONOID_FULL_SIZE,
-                "tagmonoid_buf",
+            let reduced_scan_buf = ResourceProxy::new_buf(
+                pathtag_wgs as u64 * TAG_MONOID_FULL_SIZE,
+                "reduced_scan_buf",
             );
-            let pathtag_scan = if pathtag_large {
-                shaders.pathtag_scan_large
-            } else {
-                shaders.pathtag_scan
-            };
             recording.dispatch(
-                pathtag_scan,
-                (pathtag_wgs as u32, 1, 1),
-                [config_buf, scene_buf, pathtag_parent, tagmonoid_buf],
+                shaders.pathtag_scan1,
+                (reduced_size as u32 / shaders::PATHTAG_REDUCE_WG, 1, 1),
+                [reduced_buf, reduced2_buf, reduced_scan_buf],
             );
-            recording.free_resource(reduced_buf);
-            if let Some((reduced2, reduced_scan)) = large_pathtag_bufs {
-                recording.free_resource(reduced2);
-                recording.free_resource(reduced_scan);
-            }
-            let drawobj_wgs = (n_drawobj + shaders::PATH_BBOX_WG - 1) / shaders::PATH_BBOX_WG;
-            let path_bbox_buf =
-                ResourceProxy::new_buf(n_paths as u64 * PATH_BBOX_SIZE, "path_bbox_buf");
+            pathtag_parent = reduced_scan_buf;
+            large_pathtag_bufs = Some((reduced2_buf, reduced_scan_buf));
+        }
+
+        let tagmonoid_buf = ResourceProxy::new_buf(
+            pathtag_wgs as u64 * shaders::PATHTAG_REDUCE_WG as u64 * TAG_MONOID_FULL_SIZE,
+            "tagmonoid_buf",
+        );
+        let pathtag_scan = if pathtag_large {
+            shaders.pathtag_scan_large
+        } else {
+            shaders.pathtag_scan
+        };
+        recording.dispatch(
+            pathtag_scan,
+            (pathtag_wgs as u32, 1, 1),
+            [config_buf, scene_buf, pathtag_parent, tagmonoid_buf],
+        );
+        recording.free_resource(reduced_buf);
+        if let Some((reduced2, reduced_scan)) = large_pathtag_bufs {
+            recording.free_resource(reduced2);
+            recording.free_resource(reduced_scan);
+        }
+        let drawobj_wgs = (n_drawobj + shaders::PATH_BBOX_WG - 1) / shaders::PATH_BBOX_WG;
+        let path_bbox_buf =
+            ResourceProxy::new_buf(n_paths as u64 * PATH_BBOX_SIZE, "path_bbox_buf");
+        recording.dispatch(
+            shaders.bbox_clear,
+            (drawobj_wgs, 1, 1),
+            [config_buf, path_bbox_buf],
+        );
+        let cubic_buf = ResourceProxy::new_buf(n_pathtag as u64 * CUBIC_SIZE, "cubic_buf");
+        let path_coarse_wgs =
+            (n_pathtag as u32 + shaders::PATH_COARSE_WG - 1) / shaders::PATH_COARSE_WG;
+        recording.dispatch(
+            shaders.pathseg,
+            (path_coarse_wgs, 1, 1),
+            [
+                config_buf,
+                scene_buf,
+                tagmonoid_buf,
+                path_bbox_buf,
+                cubic_buf,
+            ],
+        );
+        let draw_reduced_buf =
+            ResourceProxy::new_buf(drawobj_wgs as u64 * DRAWMONOID_SIZE, "draw_reduced_buf");
+        recording.dispatch(
+            shaders.draw_reduce,
+            (drawobj_wgs, 1, 1),
+            [config_buf, scene_buf, draw_reduced_buf],
+        );
+        let draw_monoid_buf =
+            ResourceProxy::new_buf(n_drawobj as u64 * DRAWMONOID_SIZE, "draw_monoid_buf");
+        let clip_inp_buf = ResourceProxy::new_buf(n_clip as u64 * CLIP_INP_SIZE, "clip_inp_buf");
+        recording.dispatch(
+            shaders.draw_leaf,
+            (drawobj_wgs, 1, 1),
+            [
+                config_buf,
+                scene_buf,
+                draw_reduced_buf,
+                path_bbox_buf,
+                draw_monoid_buf,
+                info_bin_data_buf,
+                clip_inp_buf,
+            ],
+        );
+        recording.free_resource(draw_reduced_buf);
+        let clip_el_buf = ResourceProxy::new_buf(n_clip as u64 * CLIP_EL_SIZE, "clip_el_buf");
+        let clip_bic_buf = ResourceProxy::new_buf(
+            (n_clip / shaders::CLIP_REDUCE_WG) as u64 * CLIP_BIC_SIZE,
+            "clip_bic_buf",
+        );
+        let clip_wg_reduce = n_clip.saturating_sub(1) / shaders::CLIP_REDUCE_WG;
+        if clip_wg_reduce > 0 {
             recording.dispatch(
-                shaders.bbox_clear,
-                (drawobj_wgs, 1, 1),
-                [config_buf, path_bbox_buf],
-            );
-            let cubic_buf = ResourceProxy::new_buf(n_pathtag as u64 * CUBIC_SIZE, "cubic_buf");
-            let path_coarse_wgs =
-                (n_pathtag as u32 + shaders::PATH_COARSE_WG - 1) / shaders::PATH_COARSE_WG;
-            recording.dispatch(
-                shaders.pathseg,
-                (path_coarse_wgs, 1, 1),
+                shaders.clip_reduce,
+                (clip_wg_reduce, 1, 1),
                 [
                     config_buf,
-                    scene_buf,
-                    tagmonoid_buf,
-                    path_bbox_buf,
-                    cubic_buf,
-                ],
-            );
-            let draw_reduced_buf =
-                ResourceProxy::new_buf(drawobj_wgs as u64 * DRAWMONOID_SIZE, "draw_reduced_buf");
-            recording.dispatch(
-                shaders.draw_reduce,
-                (drawobj_wgs, 1, 1),
-                [config_buf, scene_buf, draw_reduced_buf],
-            );
-            let draw_monoid_buf =
-                ResourceProxy::new_buf(n_drawobj as u64 * DRAWMONOID_SIZE, "draw_monoid_buf");
-            let clip_inp_buf = ResourceProxy::new_buf(n_clip as u64 * CLIP_INP_SIZE, "clip_inp_buf");
-            recording.dispatch(
-                shaders.draw_leaf,
-                (drawobj_wgs, 1, 1),
-                [
-                    config_buf,
-                    scene_buf,
-                    draw_reduced_buf,
-                    path_bbox_buf,
-                    draw_monoid_buf,
-                    info_bin_data_buf,
                     clip_inp_buf,
-                ],
-            );
-            recording.free_resource(draw_reduced_buf);
-            let clip_el_buf = ResourceProxy::new_buf(n_clip as u64 * CLIP_EL_SIZE, "clip_el_buf");
-            let clip_bic_buf = ResourceProxy::new_buf(
-                (n_clip / shaders::CLIP_REDUCE_WG) as u64 * CLIP_BIC_SIZE,
-                "clip_bic_buf",
-            );
-            let clip_wg_reduce = n_clip.saturating_sub(1) / shaders::CLIP_REDUCE_WG;
-            if clip_wg_reduce > 0 {
-                recording.dispatch(
-                    shaders.clip_reduce,
-                    (clip_wg_reduce, 1, 1),
-                    [
-                        config_buf,
-                        clip_inp_buf,
-                        path_bbox_buf,
-                        clip_bic_buf,
-                        clip_el_buf,
-                    ],
-                );
-            }
-            let clip_wg = (n_clip + shaders::CLIP_REDUCE_WG - 1) / shaders::CLIP_REDUCE_WG;
-            let clip_bbox_buf = ResourceProxy::new_buf(n_clip as u64 * CLIP_BBOX_SIZE, "clip_bbox_buf");
-            if clip_wg > 0 {
-                recording.dispatch(
-                    shaders.clip_leaf,
-                    (clip_wg, 1, 1),
-                    [
-                        config_buf,
-                        clip_inp_buf,
-                        path_bbox_buf,
-                        clip_bic_buf,
-                        clip_el_buf,
-                        draw_monoid_buf,
-                        clip_bbox_buf,
-                    ],
-                );
-            }
-            recording.free_resource(clip_inp_buf);
-            recording.free_resource(clip_bic_buf);
-            recording.free_resource(clip_el_buf);
-            let draw_bbox_buf =
-                ResourceProxy::new_buf(n_paths as u64 * DRAW_BBOX_SIZE, "draw_bbox_buf");
-            let bump_buf = BufProxy::new(BUMP_SIZE, "bump_buf");
-            let width_in_bins = (config.width_in_tiles + 15) / 16;
-            let height_in_bins = (config.height_in_tiles + 15) / 16;
-            let bin_header_buf = ResourceProxy::new_buf(
-                (256 * drawobj_wgs) as u64 * BIN_HEADER_SIZE,
-                "bin_header_buf",
-            );
-            recording.clear_all(bump_buf);
-            let bump_buf = ResourceProxy::Buf(bump_buf);
-            recording.dispatch(
-                shaders.binning,
-                (drawobj_wgs, 1, 1),
-                [
-                    config_buf,
-                    draw_monoid_buf,
                     path_bbox_buf,
-                    clip_bbox_buf,
-                    draw_bbox_buf,
-                    bump_buf,
-                    info_bin_data_buf,
-                    bin_header_buf,
+                    clip_bic_buf,
+                    clip_el_buf,
                 ],
             );
-            recording.free_resource(draw_monoid_buf);
-            recording.free_resource(path_bbox_buf);
-            recording.free_resource(clip_bbox_buf);
-            // Note: this only needs to be rounded up because of the workaround to store the tile_offset
-            // in storage rather than workgroup memory.
-            let n_path_aligned = align_up(n_paths as usize, 256);
-            let path_buf = ResourceProxy::new_buf(n_path_aligned as u64 * PATH_SIZE, "path_buf");
-            let path_wgs = (n_paths + shaders::PATH_BBOX_WG - 1) / shaders::PATH_BBOX_WG;
+        }
+        let clip_wg = (n_clip + shaders::CLIP_REDUCE_WG - 1) / shaders::CLIP_REDUCE_WG;
+        let clip_bbox_buf = ResourceProxy::new_buf(n_clip as u64 * CLIP_BBOX_SIZE, "clip_bbox_buf");
+        if clip_wg > 0 {
             recording.dispatch(
-                shaders.tile_alloc,
-                (path_wgs, 1, 1),
+                shaders.clip_leaf,
+                (clip_wg, 1, 1),
                 [
                     config_buf,
-                    scene_buf,
-                    draw_bbox_buf,
-                    bump_buf,
-                    path_buf,
-                    tile_buf,
-                ],
-            );
-            recording.free_resource(draw_bbox_buf);
-            recording.dispatch(
-                shaders.path_coarse,
-                (path_coarse_wgs, 1, 1),
-                [
-                    config_buf,
-                    scene_buf,
-                    tagmonoid_buf,
-                    cubic_buf,
-                    path_buf,
-                    bump_buf,
-                    tile_buf,
-                    segments_buf,
-                ],
-            );
-            recording.free_resource(tagmonoid_buf);
-            recording.free_resource(cubic_buf);
-            recording.dispatch(
-                shaders.backdrop,
-                (path_wgs, 1, 1),
-                [config_buf, path_buf, tile_buf],
-            );
-            recording.dispatch(
-                shaders.coarse,
-                (width_in_bins, height_in_bins, 1),
-                [
-                    config_buf,
-                    scene_buf,
+                    clip_inp_buf,
+                    path_bbox_buf,
+                    clip_bic_buf,
+                    clip_el_buf,
                     draw_monoid_buf,
-                    bin_header_buf,
-                    info_bin_data_buf,
-                    path_buf,
-                    tile_buf,
-                    bump_buf,
-                    ptcl_buf,
+                    clip_bbox_buf,
                 ],
             );
-            // recording.dispatch(
-            //     shaders.coarse_full,
-            //     (width_in_bins, height_in_bins, 1),
-            //     [
-            //         config_buf,
-            //         scene_buf,
-            //         draw_monoid_buf,
-            //         bin_header_buf,
-            //         info_bin_data_buf,
-            //         path_buf,
-            //         tile_buf,
-            //         bump_buf,
-            //         ptcl2_buf,
-            //     ],
-            // );
-            
-            recording.free_resource(scene_buf);
-            recording.free_resource(draw_monoid_buf);
-            recording.free_resource(bin_header_buf);
-            recording.free_resource(path_buf);
-            self.width_in_tiles = config.width_in_tiles;
-            self.height_in_tiles = config.height_in_tiles;
-            self.fine = Some(FineResources {
-                            config_buf,
-                            bump_buf,
-                            tile_buf,
-                            segments_buf,
-                            ptcl_buf,
-                            gradient_image,
-                            info_bin_data_buf,
-                            image_atlas: ResourceProxy::Image(image_atlas),
-                            out_image,
-                        });
-            // self.fines.push(FineResources {
-            //     config_buf,
-            //     bump_buf,
-            //     tile_buf,
-            //     segments_buf,
-            //     ptcl_buf: ptcl2_buf,
-            //     gradient_image,
-            //     info_bin_data_buf,
-            //     image_atlas: ResourceProxy::Image(image_atlas),
-            //     out_image: self.output_images[1].clone(),
-            // });
-            if robust {
-                recording.download(*bump_buf.as_buf().unwrap());
-            }
-            recording.free_resource(bump_buf);
-        // }
+        }
+        recording.free_resource(clip_inp_buf);
+        recording.free_resource(clip_bic_buf);
+        recording.free_resource(clip_el_buf);
+        let draw_bbox_buf =
+            ResourceProxy::new_buf(n_paths as u64 * DRAW_BBOX_SIZE, "draw_bbox_buf");
+        let bump_buf = BufProxy::new(BUMP_SIZE, "bump_buf");
+        let width_in_bins = (config.width_in_tiles + 15) / 16;
+        let height_in_bins = (config.height_in_tiles + 15) / 16;
+        let bin_header_buf = ResourceProxy::new_buf(
+            (256 * drawobj_wgs) as u64 * BIN_HEADER_SIZE,
+            "bin_header_buf",
+        );
+        recording.clear_all(bump_buf);
+        let bump_buf = ResourceProxy::Buf(bump_buf);
+        recording.dispatch(
+            shaders.binning,
+            (drawobj_wgs, 1, 1),
+            [
+                config_buf,
+                draw_monoid_buf,
+                path_bbox_buf,
+                clip_bbox_buf,
+                draw_bbox_buf,
+                bump_buf,
+                info_bin_data_buf,
+                bin_header_buf,
+            ],
+        );
+        recording.free_resource(draw_monoid_buf);
+        recording.free_resource(path_bbox_buf);
+        recording.free_resource(clip_bbox_buf);
+        // Note: this only needs to be rounded up because of the workaround to store the tile_offset
+        // in storage rather than workgroup memory.
+        let n_path_aligned = align_up(n_paths as usize, 256);
+        let path_buf = ResourceProxy::new_buf(n_path_aligned as u64 * PATH_SIZE, "path_buf");
+        let path_wgs = (n_paths + shaders::PATH_BBOX_WG - 1) / shaders::PATH_BBOX_WG;
+        recording.dispatch(
+            shaders.tile_alloc,
+            (path_wgs, 1, 1),
+            [
+                config_buf,
+                scene_buf,
+                draw_bbox_buf,
+                bump_buf,
+                path_buf,
+                tile_buf,
+            ],
+        );
+        recording.free_resource(draw_bbox_buf);
+        recording.dispatch(
+            shaders.path_coarse,
+            (path_coarse_wgs, 1, 1),
+            [
+                config_buf,
+                scene_buf,
+                tagmonoid_buf,
+                cubic_buf,
+                path_buf,
+                bump_buf,
+                tile_buf,
+                segments_buf,
+            ],
+        );
+        recording.free_resource(tagmonoid_buf);
+        recording.free_resource(cubic_buf);
+        recording.dispatch(
+            shaders.backdrop,
+            (path_wgs, 1, 1),
+            [config_buf, path_buf, tile_buf],
+        );
+        recording.dispatch(
+            shaders.coarse,
+            (width_in_bins, height_in_bins, 1),
+            [
+                config_buf,
+                scene_buf,
+                draw_monoid_buf,
+                bin_header_buf,
+                info_bin_data_buf,
+                path_buf,
+                tile_buf,
+                bump_buf,
+                ptcl_buf,
+            ],
+        );
+        
+        recording.free_resource(scene_buf);
+        recording.free_resource(draw_monoid_buf);
+        recording.free_resource(bin_header_buf);
+        recording.free_resource(path_buf);
+        self.width_in_tiles = config.width_in_tiles;
+        self.height_in_tiles = config.height_in_tiles;
+        self.fine = Some(FineResources {
+                        config_buf,
+                        bump_buf,
+                        tile_buf,
+                        segments_buf,
+                        ptcl_buf,
+                        gradient_image,
+                        info_bin_data_buf,
+                        image_atlas: ResourceProxy::Image(image_atlas),
+                        out_image,
+                    });
+        if robust {
+            recording.download(*bump_buf.as_buf().unwrap());
+        }
+        recording.free_resource(bump_buf);
         
         recording
     }
 
     /// Run fine rasterization assuming the coarse phase succeeded.
     pub fn record_fine(&mut self, shaders: &FullShaders, recording: &mut Recording) {
-        // for i in 0..self.fines.len(){
-            if let Some(fine) = &mut self.fine{
-                let mut fine_shaderid = shaders.fine;
-                // if i == 1{
-                //     fine_shaderid = shaders.fine2;
-                // }
-                recording.dispatch(
-                    fine_shaderid,
-                    (self.width_in_tiles, self.height_in_tiles, 1),
-                    [
-                        fine.config_buf,
-                        fine.tile_buf,
-                        fine.segments_buf,
-                        ResourceProxy::Image(fine.out_image),
-                        fine.ptcl_buf,
-                        fine.gradient_image,
-                        fine.info_bin_data_buf,
-                        fine.image_atlas,
-                    ],
-                );
-                recording.free_resource(fine.config_buf);
-                recording.free_resource(fine.tile_buf);
-                recording.free_resource(fine.segments_buf);
-                recording.free_resource(fine.ptcl_buf);
-                recording.free_resource(fine.gradient_image);
-                recording.free_resource(fine.image_atlas);
-                recording.free_resource(fine.info_bin_data_buf);
-            }
-            
-        // }
-        // if self.fines.len() >= 2{
-        //     let img1 = ResourceProxy::Image(self.fines[0].out_image);
-        //     let img2 = ResourceProxy::Image(self.fines[1].out_image);
-        //     recording.dispatch(
-        //         shaders.blend_all_output_image,
-        //         (self.width_in_tiles, self.height_in_tiles, 1),
-        //         [
-        //             // self.fines[0].as_ref().unwrap().config_buf,
-        //             ResourceProxy::Image(*self.finished_out_image.as_ref().unwrap()),
-        //             img1,
-        //             img2,
-        //         ],
-        //     );
-        //     recording.free_resource(img1);
-        //     recording.free_resource(img2);
-        // }
+        
+        if let Some(fine) = &mut self.fine{
+            recording.dispatch(
+                shaders.fine,
+                (self.width_in_tiles, self.height_in_tiles, 1),
+                [
+                    fine.config_buf,
+                    fine.tile_buf,
+                    fine.segments_buf,
+                    ResourceProxy::Image(fine.out_image),
+                    fine.ptcl_buf,
+                    fine.gradient_image,
+                    fine.info_bin_data_buf,
+                    fine.image_atlas,
+                ],
+            );
+            recording.free_resource(fine.config_buf);
+            recording.free_resource(fine.tile_buf);
+            recording.free_resource(fine.segments_buf);
+            recording.free_resource(fine.ptcl_buf);
+            recording.free_resource(fine.gradient_image);
+            recording.free_resource(fine.image_atlas);
+            recording.free_resource(fine.info_bin_data_buf);
+        }
     }
 
     /// Get the output image.
@@ -668,17 +568,10 @@ impl Render {
     /// This is going away, as the caller will add the output image to the bind
     /// map.
     pub fn out_image(&self) -> ImageProxy {
-        // if self.fines.len() >= 2{
-        //     return self.fines[1].out_image;
-        // }
-        // *self.finished_out_image.as_ref().unwrap()
         self.fine.as_ref().unwrap().out_image
     }
 
     pub fn bump_buf(&self) -> BufProxy {
         *self.fine.as_ref().unwrap().bump_buf.as_buf().unwrap()
     }
-    // pub fn bump_buf2(&self) -> BufProxy {
-    //     *self.fine.bump_buf.as_buf().unwrap()
-    // }
 }

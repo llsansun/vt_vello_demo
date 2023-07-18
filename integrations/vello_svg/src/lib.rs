@@ -38,7 +38,7 @@ use std::convert::Infallible;
 use usvg::NodeExt;
 use vello::kurbo::{Affine, BezPath, Rect};
 use vello::peniko::{Brush, Color, Fill, Stroke};
-use vello::{SceneBuilder, SceneFragment};
+use vello::SceneBuilder;
 
 pub use usvg;
 
@@ -64,26 +64,14 @@ pub fn render_scenes_tree_with<F: FnMut(&mut SceneBuilder, &usvg::Node) -> Resul
     mut on_err: F,
 ) -> Result<(), E>{
     let mut time:usize = 0;
-    // let mut scenes = Vec::new();
-    // for _ in 0..scene_count {
-    //     let scene = SceneFragment::new();
-    //     scenes.push(scene);
-    // }
     for elt in svg.root.descendants() {
-        // if time % 40000 == 0 {
-        //     // let mut scene = SceneFragment::new();
-        //     let mut builder = SceneBuilder::for_fragment(&mut scenes[time / 40000]);
-        //     sbs.push(builder);
-        // }
         time+=1;
         if time < offset {
             continue;
         }
-        if time >= offset + 40000{
+        if time >= offset + vello::scene::SCENE_TOTAL_PATH_COUNT{
             break;
         }
-        // let index = time / 40000;
-        // let sb = &mut sbs[index];
         let transform = {
             let usvg::Transform { a, b, c, d, e, f } = elt.abs_transform();
             Affine::new([a, b, c, d, e, f])
@@ -180,8 +168,8 @@ pub fn render_tree_with<F: FnMut(&mut SceneBuilder, &usvg::Node) -> Result<(), E
     let mut time:usize = 0;
     for elt in svg.root.descendants() {
         time+=1;
-        let index = time / 40000;
-        let mut sb = &mut sbs[index];
+        let index = time / vello::scene::SCENE_TOTAL_PATH_COUNT;
+        let sb = &mut sbs[index];
         let transform = {
             let usvg::Transform { a, b, c, d, e, f } = elt.abs_transform();
             Affine::new([a, b, c, d, e, f])

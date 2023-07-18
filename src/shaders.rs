@@ -82,10 +82,7 @@ pub struct FullShaders {
     pub path_coarse: ShaderId,
     pub backdrop: ShaderId,
     pub coarse: ShaderId,
-    pub coarse_full: ShaderId,
     pub fine: ShaderId,
-    pub fine2: ShaderId,
-    pub blend_all_output_image: ShaderId,
 }
 
 pub fn init_shaders(device: &Device, engine: &mut Engine) -> Result<Shaders, Error> {
@@ -344,22 +341,6 @@ pub fn full_shaders(device: &Device, engine: &mut Engine) -> Result<FullShaders,
             BindType::Buffer,
         ],
     )?;
-    let coarse_full = engine.add_shader(
-        device,
-        "coarse_full",
-        preprocess::preprocess(shader!("coarse_full"), &uniform, &imports).into(),
-        &[
-            BindType::Uniform,
-            BindType::BufReadOnly,
-            BindType::BufReadOnly,
-            BindType::BufReadOnly,
-            BindType::BufReadOnly,
-            BindType::BufReadOnly,
-            BindType::BufReadOnly,
-            BindType::Buffer,
-            BindType::Buffer,
-        ],
-    )?;
     
     let fine = engine.add_shader(
         device,
@@ -376,32 +357,7 @@ pub fn full_shaders(device: &Device, engine: &mut Engine) -> Result<FullShaders,
             BindType::ImageRead(ImageFormat::Rgba8),
         ],
     )?;
-    let fine2 = engine.add_shader(
-        device,
-        "fine2",
-        preprocess::preprocess(shader!("fine2"), &full_config, &imports).into(),
-        &[
-            BindType::Uniform,
-            BindType::BufReadOnly,
-            BindType::BufReadOnly,
-            BindType::Image(ImageFormat::Rgba8),
-            BindType::BufReadOnly,
-            BindType::ImageRead(ImageFormat::Rgba8),
-            BindType::BufReadOnly,
-            BindType::ImageRead(ImageFormat::Rgba8),
-        ],
-    )?;
     
-    let blend_all_output_image = engine.add_shader(
-        device,
-        "blend_all_output_image",
-        preprocess::preprocess(shader!("blend_all_output_image"), &full_config, &imports).into(),
-        &[
-            BindType::Image(ImageFormat::Rgba8),
-            BindType::ImageRead(ImageFormat::Rgba8),
-            BindType::ImageRead(ImageFormat::Rgba8),
-        ],
-    )?;
     Ok(FullShaders {
         pathtag_reduce,
         pathtag_reduce2,
@@ -419,10 +375,7 @@ pub fn full_shaders(device: &Device, engine: &mut Engine) -> Result<FullShaders,
         path_coarse,
         backdrop,
         coarse,
-        coarse_full,
         fine,
-        fine2,
-        blend_all_output_image,
     })
 }
 

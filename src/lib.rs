@@ -16,7 +16,7 @@
 
 mod engine;
 mod render;
-mod scene;
+pub mod scene;
 mod shaders;
 
 /// Styling and composition primitives.
@@ -270,26 +270,35 @@ impl Renderer {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &blit.bind_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&target.view),
-                },
-                if self.target2.is_some(){
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&self.target2.as_ref().unwrap().view),
-                    }
-                }else{
-                    wgpu::BindGroupEntry {
-                        binding: 1,
+            let bind_group = if !is_clear{
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &blit.blend_bind_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&target.view),
+                        },wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: 
+                            if self.target2.as_ref().is_some(){
+                                wgpu::BindingResource::TextureView(&self.target2.as_ref().unwrap().view)
+                            }else{
+                                wgpu::BindingResource::TextureView(&target.view)
+                            },
+                        }
+                    ],
+                })
+            }else{
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &blit.bind_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
                         resource: wgpu::BindingResource::TextureView(&target.view),
-                    }
-                }
-                ],
-            });
+                    }],
+                })
+            };
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -306,7 +315,11 @@ impl Renderer {
                 })],
                 depth_stencil_attachment: None,
             });
-            render_pass.set_pipeline(&blit.pipeline);
+            render_pass.set_pipeline(if is_clear{
+                &blit.pipeline
+            }else{
+                &blit.blend_pipeline
+            });
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
@@ -352,12 +365,25 @@ impl TargetTexture {
 }
 
 struct BlitPipeline {
+    blend_bind_layout: wgpu::BindGroupLayout,
+    blend_pipeline: wgpu::RenderPipeline,
     bind_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
 }
 
 impl BlitPipeline {
     fn new(device: &Device, format: TextureFormat) -> Self {
+        let (bind_layout, pipeline) = Self::new_blit_texture(device, format);
+        let (blend_bind_layout, blend_pipeline) = Self::new_blend_pipeline(device, format);
+        Self {
+            blend_bind_layout,
+            blend_pipeline,
+            bind_layout,
+            pipeline,
+        }
+    }
+
+    fn new_blend_pipeline(device: &Device, format: TextureFormat) -> (wgpu::BindGroupLayout, wgpu::RenderPipeline){
         const SHADERS: &str = r#"
             @vertex
             fn vs_main(@builtin(vertex_index) ix: u32) -> @builtin(position) vec4<f32> {
@@ -392,10 +418,10 @@ impl BlitPipeline {
         "#;
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("blit shaders"),
+            label: Some("blend blit shaders"),
             source: wgpu::ShaderSource::Wgsl(SHADERS.into()),
         });
-        let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let blend_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             entries: &[wgpu::BindGroupLayoutEntry {
                 visibility: wgpu::ShaderStages::FRAGMENT,
@@ -409,6 +435,96 @@ impl BlitPipeline {
             },wgpu::BindGroupLayoutEntry {
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 binding: 1,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&blend_bind_layout],
+            push_constant_ranges: &[],
+        });
+        let blend_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+        (blend_bind_layout, blend_pipeline)
+    }
+
+    fn new_blit_texture(device: &Device, format: TextureFormat) -> (wgpu::BindGroupLayout, wgpu::RenderPipeline) {
+        const SHADERS: &str = r#"
+            @vertex
+            fn vs_main(@builtin(vertex_index) ix: u32) -> @builtin(position) vec4<f32> {
+                // Generate a full screen quad in NDCs
+                var vertex = vec2(-1.0, 1.0);
+                switch ix {
+                    case 1u: {
+                        vertex = vec2(-1.0, -1.0);
+                    }
+                    case 2u, 4u: {
+                        vertex = vec2(1.0, -1.0);
+                    }
+                    case 5u: {
+                        vertex = vec2(1.0, 1.0);
+                    }
+                    default: {}
+                }
+                return vec4(vertex, 0.0, 1.0);
+            }
+            
+            @group(0) @binding(0)
+            var fine_output: texture_2d<f32>;
+            
+            @fragment
+            fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+                let rgba_sep = textureLoad(fine_output, vec2<i32>(pos.xy), 0);
+                return vec4(rgba_sep.rgb * rgba_sep.a, rgba_sep.a);
+            }
+        "#;
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("blit shaders"),
+            source: wgpu::ShaderSource::Wgsl(SHADERS.into()),
+        });
+        let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                binding: 0,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
@@ -456,9 +572,6 @@ impl BlitPipeline {
             },
             multiview: None,
         });
-        Self {
-            bind_layout,
-            pipeline,
-        }
+        (bind_layout, pipeline)
     }
 }

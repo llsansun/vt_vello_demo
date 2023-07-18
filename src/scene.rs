@@ -38,6 +38,8 @@ impl Scene {
     }
 }
 
+pub const SCENE_TOTAL_PATH_COUNT: usize = 60000;
+
 /// Encoded definition of a scene fragment and associated resources.
 #[derive(Default)]
 pub struct SceneFragment {

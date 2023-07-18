@@ -290,8 +290,8 @@ fn run(
                     .window
                     .set_title(&format!("Vello demo - {}", example_scene.config.name));
             }
-            let mut builder_1 = SceneBuilder::for_fragment(&mut fragment);
-            let mut builder_2 = SceneBuilder::for_fragment(&mut fragment2);
+            let builder_1 = SceneBuilder::for_fragment(&mut fragment);
+            let builder_2 = SceneBuilder::for_fragment(&mut fragment2);
             let mut builders = vec![builder_1, builder_2];
             let mut scene_params = SceneParams {
                 time: start.elapsed().as_secs_f64(),
@@ -302,17 +302,6 @@ fn run(
                 interactive: true,
             };
             (example_scene.function)(&mut builders, &mut scene_params);
-
-            // let mut builder = SceneBuilder::for_fragment(&mut fragment2);
-            // let mut scene_params = SceneParams {
-            //     time: start.elapsed().as_secs_f64(),
-            //     text: &mut simple_text,
-            //     images: &mut images,
-            //     resolution: None,
-            //     base_color: None,
-            //     interactive: true,
-            // };
-            // (example_scene.function)(&mut builder, &mut scene_params);
 
             // If the user specifies a base color in the CLI we use that. Otherwise we use any
             // color specified by the scene. The default is black.
@@ -390,7 +379,6 @@ fn run(
                 CurveTo((-50., graph_max_height - 20.).into(),(-50., graph_max_height - 20.).into(),(0., graph_max_height).into()),
                 ClosePath,
             ];
-            let dash_pattern: Dashes = Dashes::new();
             builder2.stroke(
                 &Stroke::new((1.) as f32),
                 transform*Affine::translate((100., 100.)),
@@ -412,7 +400,7 @@ fn run(
             
             if stats_shown {
                 snapshot.draw_layer(
-                    &mut builder2,
+                    &mut builder,
                     &mut scene_params.text,
                     width as f64,
                     height as f64,

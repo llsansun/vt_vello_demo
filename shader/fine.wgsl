@@ -342,9 +342,7 @@ fn main(
             case 11u: {
                 cmd_ix = ptcl[cmd_ix + 1u];
             }
-            default: {
-                cmd_ix += 1u;
-            }
+            default: {}
         }
     }
     let xy_uint = vec2<u32>(xy);
